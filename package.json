@@ -1,0 +1,26 @@
+{
+  "name": "lvw-harness",
+  "version": "0.1.0",
+  "description": "A local-first agent harness with a one-command model manager for Hugging Face, GitHub and GitLab.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lvw": "src/cli/main.ts"
+  },
+  "scripts": {
+    "lvw": "bun src/cli/main.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/cli/main.ts --compile --outfile dist/lvw"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-mcp": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}
