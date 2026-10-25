@@ -39,9 +39,9 @@ export function fixtureServer(files: Record<string, Uint8Array>) {
         // Send only part of the file, as if the connection dropped.
         const cut = slice.subarray(0, state.cutNext);
         state.cutNext = 0;
-        return new Response(cut, { status: range ? 206 : 200, headers: { "content-length": String(cut.length) } });
+        return new Response(cut as unknown as BodyInit, { status: range ? 206 : 200, headers: { "content-length": String(cut.length) } });
       }
-      return new Response(slice, { status: range ? 206 : 200, headers });
+      return new Response(slice as unknown as BodyInit, { status: range ? 206 : 200, headers });
     },
   });
   return { url: `http://127.0.0.1:${server.port}`, state, stop: () => server.stop(true) };
