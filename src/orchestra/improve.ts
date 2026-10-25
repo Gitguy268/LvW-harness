@@ -70,7 +70,7 @@ async function grade(resolved: ResolvedChatModel, task: string, answer: string, 
     return { score: Math.max(0, Math.min(10, Number(r.score) || 0)), reason: String(r.reason ?? "") };
   } catch {
     const n = /\b(10|\d)\b/.exec(text)?.[1];
-    return { score: n ? Number(n) : 0, reason: text.trim().slice(0, 200) || "the grader gave no score" };
+    return { score: n ? Number(n) : 0, reason: text.replace(/\s+/g, " ").trim().slice(0, 200) || "the grader gave no score" };
   }
 }
 

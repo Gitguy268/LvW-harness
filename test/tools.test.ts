@@ -7,7 +7,7 @@ import { DEFAULTS } from "../src/config.ts";
 import { Session, shutdownTools } from "../src/core/session.ts";
 import { listPlugins } from "../src/plugins/plugins.ts";
 import { hostBackend } from "../src/sandbox/exec.ts";
-import { listSkills } from "../src/skills/skills.ts";
+import { listSkills, parseFrontmatter } from "../src/skills/skills.ts";
 import { browserTools } from "../src/tools/browser.ts";
 import type { ToolContext } from "../src/tools/tool.ts";
 import { tempHome } from "./helpers.ts";
@@ -31,6 +31,13 @@ function faux() {
 }
 
 const text = (r: { content: { type: string; text?: string }[] }) => r.content.map((b) => b.text ?? "").join("");
+
+describe("skill frontmatter", () => {
+  test("folded and literal block scalars", () => {
+    const fm = parseFrontmatter("---\nname: x\ndescription: >\n  Line one\n  line two.\nnote: |-\n  kept\n---\nbody");
+    expect(fm).toEqual({ name: "x", description: "Line one line two.", note: "kept" });
+  });
+});
 
 describe("browser", () => {
   test("open, snapshot, click by ref, read the result", async () => {

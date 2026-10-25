@@ -118,7 +118,8 @@ tr:last-child td { border-bottom: 0; }
 .tool.ok .state { background: var(--good); }
 .tool.err .state { background: var(--bad); }
 .tool pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); max-height: 260px; overflow: auto; font-family: var(--mono); white-space: pre-wrap; }
-.approval { max-width: 760px; margin: 0 auto 12px; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 10px 14px; }
+.approval { max-width: 760px; margin: 0 0 12px; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); padding: 10px 14px; }
+.transcript .approval { margin: 0 auto 12px; }
 .approval .mono { display: block; margin: 6px 0 10px; white-space: pre-wrap; word-break: break-all; }
 .composer { border-top: 1px solid var(--line); padding: 12px 28px 16px; background: var(--panel); }
 .composer textarea { min-height: 52px; max-height: 240px; }

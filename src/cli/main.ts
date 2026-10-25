@@ -19,7 +19,8 @@ ${c.bold("Agent")}
 
 ${c.bold("Extras")}
   lvw skill ls|add|rm|show|approve   lvw memory ls|search|add|rm
-  lvw task ls|add|show|run|done      lvw routine ls|add|rm|on|off
+  lvw task ls|add|show|run|done      lvw task approve|reject <id>
+  lvw routine ls|add|rm|on|off
   lvw mcp ls|add|rm                  lvw tool install|rm scrapling
   lvw plugin ls
 

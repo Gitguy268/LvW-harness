@@ -28,10 +28,10 @@ export function parseFrontmatter(text: string): Record<string, string> {
     const kv = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
     if (kv) {
       key = kv[1];
-      out[key] = kv[2].replace(/^["']|["']$/g, "").trim();
+      // A YAML block scalar (">", "|-"…) starts empty; its indented lines follow.
+      out[key] = /^[>|][-+]?$/.test(kv[2].trim()) ? "" : kv[2].replace(/^["']|["']$/g, "").trim();
     } else if (key && /^\s+/.test(line)) out[key] = `${out[key]} ${line.trim()}`.trim();
   }
-  for (const k of Object.keys(out)) if (out[k] === ">" || out[k] === "|") out[k] = "";
   return out;
 }
 

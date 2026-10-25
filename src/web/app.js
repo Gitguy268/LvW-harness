@@ -409,7 +409,7 @@ async function modelsPage(root) {
     const list = [...state.jobs.values()].filter((j) => j.status === "running" || Date.now() - (j.seen ?? Date.now()) < 60_000).reverse();
     jobs.replaceChildren(
       list.length ? h("h2", {}, "Downloads") : "",
-      list.map((j) =>
+      ...list.map((j) =>
         h(
           "div",
           { class: "card", style: "margin-bottom:8px" },
@@ -528,7 +528,7 @@ async function tasksPage(root) {
     const { tasks, approvals: pending } = await api("/api/tasks");
     approvals.replaceChildren(
       pending.length ? h("h2", {}, "Waiting for you") : "",
-      pending.map((a) => h("div", { class: "approval" }, h("strong", {}, `#${a.id}${a.task_id ? ` · task ${a.task_id}` : ""}`), h("span", { class: "mono" }, a.question), h("div", { class: "row" }, h("button", { class: "primary", onclick: () => decide(a.id, true) }, "Approve"), h("button", { class: "danger", onclick: () => decide(a.id, false) }, "Reject")))),
+      ...pending.map((a) => h("div", { class: "approval" }, h("strong", {}, `#${a.id}${a.task_id ? ` · task ${a.task_id}` : ""}`), h("span", { class: "mono" }, a.question), h("div", { class: "row" }, h("button", { class: "primary", onclick: () => decide(a.id, true) }, "Approve"), h("button", { class: "danger", onclick: () => decide(a.id, false) }, "Reject")))),
     );
     const cols = ["todo", "doing", "blocked", "review", "done"];
     board.replaceChildren(
