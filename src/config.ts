@@ -24,7 +24,7 @@ export interface Config {
   /** Refuse downloads that would leave less than this much free disk. */
   minFreeGB: number;
   searxngUrl?: string;
-  browser: { executablePath?: string; cdpUrl?: string; headless: boolean };
+  browser: { enabled: boolean; executablePath?: string; cdpUrl?: string; headless: boolean };
   budgets: { maxTurns: number; maxTokens: number };
   mcpServers: Record<string, McpServerConfig>;
   telegram: { allowedChatIds: number[] };
@@ -39,7 +39,7 @@ export const DEFAULTS: Config = {
   llama: { port: 7879, ctx: 8192, args: [] },
   ollamaUrl: process.env.OLLAMA_HOST ? normalizeOllama(process.env.OLLAMA_HOST) : "http://127.0.0.1:11434",
   minFreeGB: 2,
-  browser: { headless: true },
+  browser: { enabled: true, headless: true },
   budgets: { maxTurns: 40, maxTokens: 400_000 },
   mcpServers: {},
   telegram: { allowedChatIds: [] },

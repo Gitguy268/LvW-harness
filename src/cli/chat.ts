@@ -2,7 +2,7 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Container, Editor, Loader, Markdown, matchesKey, ProcessTerminal, Text, TuiMainScreen, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { createInterface } from "node:readline/promises";
 import type { Answer, ApprovalRequest } from "../core/permissions.ts";
-import { listSessions, Session } from "../core/session.ts";
+import { listSessions, Session, shutdownTools } from "../core/session.ts";
 import { parseAgentArgs } from "./agent-args.ts";
 import { toolText } from "./run.ts";
 import { c } from "./ui.ts";
@@ -150,6 +150,7 @@ export async function chatCommand(argv: string[]) {
   const quit = async () => {
     tui.stop();
     await session.dispose();
+    await shutdownTools();
     console.log(c.dim(`session ${session.id} · resume with: lvw chat --resume ${session.id}`));
     process.exit(0);
   };
@@ -202,4 +203,5 @@ async function plainChat(a: ReturnType<typeof parseAgentArgs>, resumeId?: string
   });
   for await (const line of rl) if (line.trim()) await session.prompt(line);
   await session.dispose();
+  await shutdownTools();
 }

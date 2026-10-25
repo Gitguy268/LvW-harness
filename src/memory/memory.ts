@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { getDb } from "../db.ts";
 import { paths } from "../paths.ts";
 
@@ -67,7 +67,7 @@ export function reindex(cwd: string) {
         if (known.get(p) === mtime) continue;
         const body = readFileSync(p, "utf8");
         db.query("DELETE FROM memory_fts WHERE path = ?").run(p);
-        db.query("INSERT INTO memory_fts (path, title, body) VALUES (?, ?, ?)").run(p, titleOf(body, p), body);
+        db.query("INSERT INTO memory_fts (path, title, body) VALUES (?, ?, ?)").run(p, titleOf(body, basename(p, ".md")), body);
         db.query("INSERT OR REPLACE INTO memory_files (path, mtime) VALUES (?, ?)").run(p, mtime);
       }
     }

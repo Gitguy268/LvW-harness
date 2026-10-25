@@ -16,10 +16,10 @@ ${c.bold("Agent")}
   lvw serve [--host h] [--port p]                       web UI and API (default 127.0.0.1:7878)
 
 ${c.bold("Extras")}
-  lvw skill ls|add|rm|show      lvw memory ls|search|add|rm
-  lvw task add|ls|show|done|run lvw routine add|ls|rm
-  lvw mcp ls                    lvw tool install scrapling
-  lvw improve "<task>"          lvw telegram
+  lvw skill ls|add|rm|show|approve   lvw memory ls|search|add|rm
+  lvw task ls|add|show|run|done      lvw routine ls|add|rm|on|off
+  lvw mcp ls|add|rm                  lvw tool install|rm scrapling
+  lvw plugin ls
 
 ${c.bold("Setup")}
   lvw setup [--yes]   lvw doctor   lvw config [get|set|path]   lvw version
@@ -55,8 +55,6 @@ async function main(argv: string[]) {
       return (await import("./run.ts")).runCommand(rest);
     case "research":
       return (await import("./run.ts")).runCommand(rest, "research");
-    case "improve":
-      return (await import("./improve.ts")).improveCommand(rest);
     case "serve":
       return (await import("../server/server.ts")).serveCommand(rest);
     case "skill":
@@ -74,8 +72,9 @@ async function main(argv: string[]) {
       return (await import("./extras.ts")).mcpCommand(rest);
     case "tool":
       return (await import("./extras.ts")).toolCommand(rest);
-    case "telegram":
-      return (await import("../plugins/telegram.ts")).telegramCommand(rest);
+    case "plugin":
+    case "plugins":
+      return (await import("./extras.ts")).pluginCommand();
     case "version":
     case "--version":
     case "-v":

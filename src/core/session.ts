@@ -3,9 +3,13 @@ import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { loadConfig, type Config, type PermissionMode } from "../config.ts";
 import { getDb } from "../db.ts";
+import { loadPlugins } from "../plugins/plugins.ts";
 import { dockerBackend, hostBackend, type ExecBackend } from "../sandbox/exec.ts";
+import { browserTools, closeBrowser, closeSpace } from "../tools/browser.ts";
 import { fsTools } from "../tools/fs.ts";
 import { knowledgeTools } from "../tools/knowledge.ts";
+import { closeMcp, mcpTools } from "../tools/mcp.ts";
+import { scrapeTools } from "../tools/scrape.ts";
 import { taskTools } from "../tools/orchestra.ts";
 import { shellTools } from "../tools/shell.ts";
 import { defineTool, type LvwTool, type ToolContext } from "../tools/tool.ts";
@@ -38,10 +42,28 @@ export interface SessionOptions {
 }
 
 export type ToolFactory = (ctx: ToolContext) => Promise<LvwTool[]> | LvwTool[];
-const factories: ToolFactory[] = [];
-/** Plugins, MCP and the browser add tools here once at startup. */
+type Warn = (msg: string) => void;
+const warned = new Set<string>();
+const factories: ((ctx: ToolContext, warn: Warn) => Promise<LvwTool[]> | LvwTool[])[] = [
+  (ctx) => (ctx.config.browser.enabled ? browserTools(ctx) : []),
+  (ctx) => scrapeTools(ctx),
+  (ctx, warn) => mcpTools(ctx.config.mcpServers, ctx.cwd, (name, err) => warn(`MCP server "${name}" didn't start: ${err.message}`)),
+];
+/** Add tools to every session from now on (what plugins do). */
 export function registerToolFactory(f: ToolFactory) {
   factories.push(f);
+}
+
+let plugins: Promise<void> | undefined;
+function loadPluginTools(warn: Warn) {
+  return (plugins ??= loadPlugins((name, err) => warn(`plugin "${name}" didn't load: ${err.message}`)).then((list) => {
+    for (const p of list) if (p.mod.tools) registerToolFactory(p.mod.tools);
+  }));
+}
+
+/** Close the shared browser and MCP servers so the process can exit. */
+export async function shutdownTools() {
+  await Promise.all([closeBrowser(), closeMcp()]);
 }
 
 export interface Usage {
@@ -78,7 +100,14 @@ export class Session {
 
     let tools: LvwTool[] = [...fsTools(ctx), ...shellTools(ctx), ...webTools(ctx), ...knowledgeTools(ctx), ...taskTools(ctx)];
     if (depth === 0) tools.push(subagentTool(ctx, opts));
-    for (const f of factories) tools.push(...(await f(ctx)));
+    // Each problem is reported once per process, not on every new chat.
+    const warn: Warn = (msg) => {
+      if (warned.has(msg)) return;
+      warned.add(msg);
+      opts.onStatus ? opts.onStatus(msg) : console.error(msg);
+    };
+    await loadPluginTools(warn);
+    for (const f of factories) tools.push(...(await f(ctx, warn)));
     if (opts.extraTools) tools.push(...(await opts.extraTools(ctx)));
     if (opts.only) tools = tools.filter((t) => opts.only!.includes(t.name));
 
@@ -147,6 +176,7 @@ export class Session {
   }
 
   async dispose() {
+    await closeSpace(this.id);
     await this.ctx.exec.dispose();
   }
 }
@@ -206,7 +236,9 @@ function loadMessages(id: string): AgentMessage[] | undefined {
 
 function saveMessages(id: string, cwd: string, model: string, messages: AgentMessage[]) {
   const firstUser = messages.find((m) => (m as { role: string }).role === "user") as { content: unknown } | undefined;
-  const title = typeof firstUser?.content === "string" ? firstUser.content.slice(0, 80) : "chat";
+  const content = firstUser?.content;
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((b: { text?: string }) => b.text ?? "").join(" ") : "";
+  const title = text.trim().slice(0, 80) || "chat";
   const now = Date.now();
   getDb()
     .query(

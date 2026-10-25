@@ -1,0 +1,9 @@
+// The web UI files are imported as text so the compiled binary carries them.
+declare module "*.css" {
+  const text: string;
+  export default text;
+}
+declare module "*/web/app.js" {
+  const text: string;
+  export default text;
+}

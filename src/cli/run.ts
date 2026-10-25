@@ -1,5 +1,5 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { Session } from "../core/session.ts";
+import { Session, shutdownTools } from "../core/session.ts";
 import { getTask, updateTask } from "../orchestra/tasks.ts";
 import { parseAgentArgs } from "./agent-args.ts";
 import { c, fail } from "./ui.ts";
@@ -47,6 +47,7 @@ export async function runCommand(argv: string[], mode: "default" | "research" = 
   } finally {
     process.off("SIGINT", ctrl);
     await session.dispose();
+    await shutdownTools();
   }
 }
 

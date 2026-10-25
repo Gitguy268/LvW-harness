@@ -4,6 +4,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { getToken } from "../credentials.ts";
 import { gitlabHost } from "../models/source.ts";
 import { paths } from "../paths.ts";
+import { pluginSkillDirs } from "../plugins/plugins.ts";
 import bundled from "./bundled.json" with { type: "json" };
 
 /**
@@ -50,7 +51,8 @@ function scan(dir: string, scope: Skill["scope"]): Skill[] {
 /** Project skills override user skills with the same name. */
 export function listSkills(cwd: string, includeDrafts = false): Skill[] {
   const byName = new Map<string, Skill>();
-  for (const s of [...scan(paths().skills, "user"), ...scan(join(cwd, ".lvw", "skills"), "project")]) byName.set(s.name, s);
+  const fromPlugins = pluginSkillDirs().flatMap((d) => scan(d, "user"));
+  for (const s of [...fromPlugins, ...scan(paths().skills, "user"), ...scan(join(cwd, ".lvw", "skills"), "project")]) byName.set(s.name, s);
   const list = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   return includeDrafts ? [...list, ...scan(draftsDir(), "draft")] : list;
 }
