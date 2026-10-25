@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import type { Config, PermissionMode } from "../config.ts";
+import { loadProfile } from "../orchestra/improve.ts";
 
 export function parseAgentArgs(argv: string[]) {
   const { values, positionals } = parseArgs({
@@ -17,6 +18,7 @@ export function parseAgentArgs(argv: string[]) {
       cwd: { type: "string" },
       task: { type: "string" },
       "max-turns": { type: "string" },
+      profile: { type: "string" },
     },
   });
   const permissions: PermissionMode | undefined = values.readonly ? "readonly" : values.auto || values.yes ? "auto" : undefined;
@@ -32,6 +34,8 @@ export function parseAgentArgs(argv: string[]) {
     cwd: values.cwd ?? process.cwd(),
     taskId: values.task ? Number(values.task) : undefined,
     maxTurns: values["max-turns"] ? Number(values["max-turns"]) : undefined,
+    /** System prompt addition from a profile saved by lvw improve. */
+    extraPrompt: values.profile ? loadProfile(values.profile).prompt || undefined : undefined,
     text: positionals.join(" "),
   };
 }

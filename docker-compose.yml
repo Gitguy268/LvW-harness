@@ -1,0 +1,18 @@
+# Run LvW on a VPS or locally in Docker:
+#   echo "LVW_TOKEN=$(openssl rand -base64 24)" > .env
+#   docker compose up -d
+# The web UI is on port 7878 and asks for LVW_TOKEN. Put HTTPS in front of it (see README, "VPS").
+services:
+  lvw:
+    build: .
+    image: lvw-harness:latest
+    restart: unless-stopped
+    ports:
+      - "${LVW_BIND:-127.0.0.1}:7878:7878"
+    environment:
+      LVW_TOKEN: ${LVW_TOKEN:?Set LVW_TOKEN in .env}
+    volumes:
+      - lvw-data:/data
+      - ./work:/work
+volumes:
+  lvw-data:

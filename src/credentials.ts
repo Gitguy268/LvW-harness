@@ -1,12 +1,13 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureDirs } from "./paths.ts";
 
-export type Service = "hf" | "gh" | "gl";
+export type Service = "hf" | "gh" | "gl" | "telegram";
 
 const ENV: Record<Service, string[]> = {
   hf: ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"],
   gh: ["GITHUB_TOKEN", "GH_TOKEN"],
   gl: ["GITLAB_TOKEN"],
+  telegram: ["LVW_TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN"],
 };
 
 function read(): Partial<Record<Service, string>> {

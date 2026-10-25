@@ -24,6 +24,7 @@ export async function runCommand(argv: string[], mode: "default" | "research" = 
     mode,
     taskId: a.taskId,
     maxTurns: a.maxTurns,
+    extraPrompt: a.extraPrompt,
     onStatus: (s) => !a.json && console.error(c.dim(s)),
   });
   const ctrl = () => session.abort();

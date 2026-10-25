@@ -187,7 +187,7 @@ async function pullOne(spec: string, values: { all?: boolean; name?: string; yes
           console.log(c.dim(e.text));
         } else if (e.type === "done") {
           bar.end();
-          console.log(`${c.green("pulled")} ${e.model.name}  ${formatBytes(e.model.size)}  ${e.model.mainFile ? c.dim(`run it: lvw model run ${e.model.name}`) : c.dim(`${e.model.format}: stored, not runnable by llama.cpp`)}`);
+          console.log(`${c.green("pulled")} ${e.model.name}  ${formatBytes(e.model.size)}  ${c.dim(e.model.mainFile ? `run it: lvw model run ${e.model.name}` : e.model.format === "ollama" ? `runs through Ollama: lvw chat --model ${e.model.name}` : `${e.model.format}: stored, not runnable by llama.cpp`)}`);
         }
       },
     });

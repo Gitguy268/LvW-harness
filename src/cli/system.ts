@@ -45,13 +45,18 @@ export async function runtimeCommand(argv: string[]) {
 
 export async function loginCommand(argv: string[], logout = false) {
   const service = argv[0] as Service;
-  if (!["hf", "gh", "gl"].includes(service)) fail(`lvw ${logout ? "logout" : "login"} hf|gh|gl`);
+  if (!["hf", "gh", "gl", "telegram"].includes(service)) fail(`lvw ${logout ? "logout" : "login"} hf|gh|gl|telegram`);
   if (logout) {
     setToken(service, undefined);
     return console.log(`removed the ${service} token`);
   }
-  const where = { hf: "https://huggingface.co/settings/tokens", gh: "https://github.com/settings/tokens", gl: "https://gitlab.com/-/user_settings/personal_access_tokens" }[service];
-  console.log(c.dim(`Create a read-only token at ${where}`));
+  const where = {
+    hf: "Create a read-only token at https://huggingface.co/settings/tokens",
+    gh: "Create a read-only token at https://github.com/settings/tokens",
+    gl: "Create a read-only token at https://gitlab.com/-/user_settings/personal_access_tokens",
+    telegram: "Create a bot with @BotFather in Telegram and paste its token",
+  }[service];
+  console.log(c.dim(where));
   const token = await askSecret("Token: ");
   if (!token) fail("no token given");
   setToken(service, token);
@@ -72,6 +77,12 @@ export async function doctorCommand() {
   check("ollama", (await ollamaAvailable()) ? true : "warn", (await ollamaAvailable()) ? loadConfig().ollamaUrl : "not running (optional)");
   check("models", listModels().length ? true : "warn", `${listModels().length} downloaded`);
   check("default model", loadConfig().model ? true : "warn", loadConfig().model ?? "none: lvw model use <name>");
+  if (loadConfig().browser.enabled) {
+    const { browserVersion, closeBrowser } = await import("../tools/browser.ts");
+    const v = await browserVersion(loadConfig()).catch((err: Error) => err);
+    await closeBrowser();
+    check("browser", typeof v === "string" ? true : "warn", typeof v === "string" ? `${v} (headless)` : v.message.split("\n")[0]);
+  }
   const docker = Bun.which("docker");
   check("docker", docker ? true : "warn", docker ? "available for --sandbox docker" : "missing (optional sandbox)");
   check("git", Bun.which("git") ? true : "warn", Bun.which("git") ? "ok" : "missing: needed for skill add from git hosts");

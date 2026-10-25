@@ -181,6 +181,12 @@ export async function closeSpace(sessionId: string) {
   if (s.own) await s.context.close().catch(() => {});
 }
 
+/** Start the browser the tools would use and report its version (for lvw doctor). */
+export async function browserVersion(config: ToolContext["config"]) {
+  const b = await getBrowser({ config } as ToolContext);
+  return b.version();
+}
+
 export async function closeBrowser() {
   for (const s of spaces.values()) await s.page.close().catch(() => {});
   spaces.clear();

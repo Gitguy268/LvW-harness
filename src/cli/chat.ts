@@ -64,6 +64,7 @@ export async function chatCommand(argv: string[]) {
       sandbox: a.sandbox,
       ask,
       sessionId,
+      extraPrompt: a.extraPrompt,
       onStatus: (s) => {
         status.setText(c.dim(s));
         tui.requestRender();
@@ -196,7 +197,7 @@ export async function chatCommand(argv: string[]) {
 /** Line-based fallback when stdin/stdout aren't a terminal. */
 async function plainChat(a: ReturnType<typeof parseAgentArgs>, resumeId?: string) {
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-  const session = await Session.create({ cwd: a.cwd, model: a.model, permissions: a.permissions, sandbox: a.sandbox, sessionId: resumeId });
+  const session = await Session.create({ cwd: a.cwd, model: a.model, permissions: a.permissions, sandbox: a.sandbox, sessionId: resumeId, extraPrompt: a.extraPrompt });
   session.subscribe((ev) => {
     if (ev.type === "message_update" && ev.assistantMessageEvent.type === "text_delta") process.stdout.write(ev.assistantMessageEvent.delta);
     if (ev.type === "message_end" && ev.message.role === "assistant") process.stdout.write("\n");

@@ -11,7 +11,8 @@
     "lvw": "bun src/cli/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/cli/main.ts --compile --outfile dist/lvw"
+    "build": "bun scripts/build.ts",
+    "build:all": "bun scripts/build.ts --all"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",

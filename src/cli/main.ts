@@ -7,13 +7,15 @@ const HELP = `${c.bold("lvw")} — LvW-harness ${pkg.version}, a local-first age
 ${c.bold("Models")}
   lvw model search|info|pull|ls|rm|du|gc|run|stop|use   download, run and remove models
   lvw runtime [install|update|rm]                         llama.cpp runtime
-  lvw login|logout hf|gh|gl                               tokens for gated or private models
+  lvw login|logout hf|gh|gl|telegram                      tokens for gated models and the Telegram bot
 
 ${c.bold("Agent")}
   lvw chat [--model m] [--auto|--readonly] [--sandbox docker]   terminal chat
   lvw run "<task>" [--yes] [--json]                     one task, no questions
   lvw research "<question>"                             deep research report
   lvw serve [--host h] [--port p]                       web UI and API (default 127.0.0.1:7878)
+  lvw telegram                                          talk to LvW from Telegram
+  lvw improve "<task>" [--name p]                       experimental: tune a prompt profile (--profile p)
 
 ${c.bold("Extras")}
   lvw skill ls|add|rm|show|approve   lvw memory ls|search|add|rm
@@ -57,6 +59,10 @@ async function main(argv: string[]) {
       return (await import("./run.ts")).runCommand(rest, "research");
     case "serve":
       return (await import("../server/server.ts")).serveCommand(rest);
+    case "improve":
+      return (await import("./improve.ts")).improveCommand(rest);
+    case "telegram":
+      return (await import("../channels/telegram.ts")).telegramCommand(rest);
     case "skill":
     case "skills":
       return (await import("./extras.ts")).skillCommand(rest);

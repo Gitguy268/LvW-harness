@@ -1,0 +1,19 @@
+[Unit]
+Description=LvW-harness agent server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=lvw
+Group=lvw
+Environment=LVW_HOME=/var/lib/lvw
+EnvironmentFile=-/etc/lvw.env
+WorkingDirectory=/var/lib/lvw/work
+ExecStart=/usr/local/bin/lvw serve --host 127.0.0.1
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
