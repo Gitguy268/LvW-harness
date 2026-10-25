@@ -139,11 +139,11 @@ The server only listens on `127.0.0.1` unless you tell it otherwise. Any other a
 
 ```sh
 echo "LVW_TOKEN=$(openssl rand -base64 24)" > .env
-docker compose up -d               # web UI on 127.0.0.1:7878, data in the lvw-data volume
+docker compose up -d               # web UI on 127.0.0.1:7878; models in the lvw-data volume, the agent's files in lvw-work
 docker compose exec lvw lvw model pull hf:unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M
 ```
 
-Use `LVW_BIND=0.0.0.0` in `.env` to publish the port beyond the server, or keep it local and put a proxy in front. Build without the browser with `docker compose build --build-arg WITH_BROWSER=0`.
+Keep the port local and put HTTPS in front of it (see "HTTPS with Caddy" below). The login cookie is marked `Secure` here, so logging in over plain `http://<server-ip>:7878` won't stick, and it would send your token unencrypted. Only set `LVW_BIND=0.0.0.0` in `.env` when an HTTPS proxy on another machine needs to reach the port. Build without the browser with `docker compose build --build-arg WITH_BROWSER=0`.
 
 **Bare Linux server** (x64 or arm64, with systemd):
 

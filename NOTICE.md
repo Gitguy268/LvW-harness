@@ -27,6 +27,7 @@ Copied unchanged into `skills/`, each folder with its original `LICENSE`.
 | [Ollama](https://github.com/ollama/ollama) | MIT | optional; LvW talks to a running Ollama |
 | [Scrapling](https://github.com/D4Vinci/Scrapling) | BSD-3-Clause | optional; `lvw tool install scrapling` installs it with `uv` |
 | Chromium (Debian package) | BSD-3-Clause and others | the Docker image only |
+| Liberation fonts (Debian `fonts-liberation`) | SIL Open Font License 1.1 | the Docker image only, for page rendering |
 | Models from Hugging Face, GitHub, GitLab or Ollama | each model's own licence | `lvw model pull` |
 
 ## Ideas, no code

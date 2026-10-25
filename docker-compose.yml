@@ -13,6 +13,7 @@ services:
       LVW_TOKEN: ${LVW_TOKEN:?Set LVW_TOKEN in .env}
     volumes:
       - lvw-data:/data
-      - ./work:/work
+      - lvw-work:/work
 volumes:
   lvw-data:
+  lvw-work:
