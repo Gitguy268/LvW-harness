@@ -153,7 +153,7 @@ scp dist/lvw-linux-x64 install.sh deploy/lvw.service you@server:
 ssh you@server 'mkdir -p deploy && mv lvw.service deploy/ && sudo LVW_BINARY=./lvw-linux-x64 sh install.sh'
 ```
 
-`install.sh` creates an `lvw` user, data in `/var/lib/lvw`, a token in `/etc/lvw.env`, installs llama-server and starts the `lvw` service on `127.0.0.1:7878`. Once releases are published it can download the binary itself (`curl -fsSL …/install.sh | sudo sh`).
+The server needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13 or later) to run current llama.cpp builds. `install.sh` creates an `lvw` user, data in `/var/lib/lvw`, a token in `/etc/lvw.env`, installs llama-server and starts the `lvw` service on `127.0.0.1:7878`. Once releases are published it can download the binary itself (`curl -fsSL …/install.sh | sudo sh`).
 
 <details>
 <summary><b>HTTPS with Caddy</b></summary>
