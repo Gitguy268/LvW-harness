@@ -1,3 +1,4 @@
+import { isNoToolsError } from "../core/resilience.ts";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Session, shutdownTools } from "../core/session.ts";
 import { getTask, updateTask } from "../orchestra/tasks.ts";
@@ -35,7 +36,7 @@ export async function runCommand(argv: string[], mode: "default" | "research" = 
     if (ev.type === "message_end" && ev.message.role === "assistant") {
       process.stdout.write("\n");
       const err = (ev.message as { errorMessage?: string }).errorMessage;
-      if (err) console.error(c.red(`error: ${err}`));
+      if (err && !isNoToolsError(err)) console.error(c.red(`error: ${err}`));
     }
     if (ev.type === "tool_execution_start") console.error(c.cyan(`● ${ev.toolName}`) + c.dim(` ${JSON.stringify(ev.args).slice(0, 160)}`));
     if (ev.type === "tool_execution_end" && ev.isError) console.error(c.red(`  ✗ ${toolText(ev.result).slice(0, 300)}`));

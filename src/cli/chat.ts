@@ -1,3 +1,4 @@
+import { isNoToolsError } from "../core/resilience.ts";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Container, Editor, Loader, Markdown, matchesKey, ProcessTerminal, Text, TuiMainScreen, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { createInterface } from "node:readline/promises";
@@ -105,7 +106,7 @@ export async function chatCommand(argv: string[]) {
         }
         current.setText(currentText);
       }
-      if (ev.type === "message_end" && ev.message.role === "assistant" && (ev.message as { errorMessage?: string }).errorMessage) {
+      if (ev.type === "message_end" && ev.message.role === "assistant" && (ev.message as { errorMessage?: string }).errorMessage && !isNoToolsError((ev.message as { errorMessage: string }).errorMessage)) {
         log.addChild(new Text(c.red(`error: ${(ev.message as { errorMessage?: string }).errorMessage}`), 1, 0));
       }
       if (ev.type === "tool_execution_start") {
