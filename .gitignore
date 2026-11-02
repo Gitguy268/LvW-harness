@@ -7,3 +7,4 @@ dist/
 .lvw/
 .DS_Store
 coverage/
+.vercel/
