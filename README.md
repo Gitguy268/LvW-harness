@@ -75,7 +75,7 @@ lvw research "how do llama.cpp quant types compare?"
 | **Tools** | read, write, edit, grep, glob, bash; web search and fetch; a Playwright browser with its own isolated profile per chat; memory; skills; task board; subagents; MCP servers; plugins |
 | **Permissions** | `ask` (default) asks before writes, commands that change things, and clicking or typing on websites. `--auto` stops asking, except for commands that look dangerous and writes outside the working folder. `--readonly` blocks all changes. `--sandbox docker` runs commands in a container without network |
 | **Memory** | Markdown notes in `~/.lvw/memory` (everywhere) and `.lvw/memory` (this project), with full-text search. `AGENTS.md` or `CLAUDE.md` in the folder are read as project rules |
-| **Skills** | the `SKILL.md` format. Nine MIT skills are bundled (ponytail, security-audit, tdd and more); `lvw skill add gh:owner/repo` installs others. Only names and descriptions go into the prompt, and the full text loads when needed |
+| **Skills** | the `SKILL.md` format. 18 skills are bundled: design work with `impeccable`, repository onboarding, code review, debugging, TDD, security audit and more. `lvw skill browse` lists the 90-odd plugins of [wshobson/agents](https://github.com/wshobson/agents), and adding one brings its skills and subagents; `lvw skill add gh:owner/repo` installs others. Only names and descriptions go into the prompt, and the full text loads when needed |
 | **Budgets** | 40 turns and 400k tokens per run by default (`budgets` in the config, `--max-turns`) |
 
 <details>
@@ -127,7 +127,7 @@ The web UI has pages for Chat (with approval cards and a preview of HTML or SVG 
 <table>
 <tr>
 <td><img src="docs/images/tasks.webp" alt="Tasks page with an approval waiting, a board of tasks and a routine"></td>
-<td><img src="docs/images/skills.webp" alt="Skills page listing the nine bundled skills"></td>
+<td><img src="docs/images/skills.webp" alt="Skills page listing bundled skills"></td>
 </tr>
 </table>
 
@@ -190,7 +190,8 @@ Agent
   lvw improve "<task>" [--name p]                       experimental: tune a prompt profile (--profile p)
 
 Extras
-  lvw skill ls|add|rm|show|approve   lvw memory ls|search|add|rm
+  lvw repo init                      add AGENTS.md and a repo map, keeping what exists
+  lvw skill ls|add|browse|rm|show|approve   lvw memory ls|search|add|rm
   lvw task ls|add|show|run|done      lvw task approve|reject <id>
   lvw routine ls|add|rm|on|off
   lvw mcp ls|add|rm                  lvw tool install|rm scrapling

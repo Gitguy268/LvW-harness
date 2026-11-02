@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadConfig, saveConfig } from "../config.ts";
 import { listNotes, removeNote, searchNotes, writeNote, type Scope } from "../memory/memory.ts";
 import { addRoutine, listRoutines, parseCron, removeRoutine, setRoutineEnabled } from "../orchestra/routines.ts";
 import { createTask, decideApproval, getTask, listApprovals, listTasks, taskEvents, updateTask, type TaskStatus } from "../orchestra/tasks.ts";
 import { listPlugins } from "../plugins/plugins.ts";
-import { addSkills, approveSkill, getSkill, installBundledSkills, listSkills, removeSkill } from "../skills/skills.ts";
+import { addSkills, approveSkill, browseMarketplace, getSkill, installBundledSkills, listSkills, removeSkill } from "../skills/skills.ts";
 import { closeMcp, mcpTools } from "../tools/mcp.ts";
 import { installScrapling, removeScrapling, scraplingBin } from "../tools/scrape.ts";
 import { runCommand } from "./run.ts";
@@ -22,7 +23,15 @@ export async function skillCommand(argv: string[]) {
       if (!arg) fail("lvw skill add gh:owner/repo[/path][@ref] | gl:group/project[/-/path][@ref] | ./folder");
       const r = await addSkills(arg, { project: values.project ? cwd : undefined });
       for (const s of r.installed) console.log(`${c.green("added")} ${c.bold(s.name)}  ${c.dim(s.licence)}`);
+      if (r.agents.length) console.log(`${c.green("added agents")} ${r.agents.join(", ")}`);
       console.log(c.dim("Read each skill's licence before you share or ship it."));
+      return;
+    }
+    case "browse": {
+      const repo = arg === "wshobson" || !arg ? "wshobson/agents" : arg;
+      const plugins = await browseMarketplace(repo);
+      table(plugins.map((p) => [c.bold(p.name), p.description.slice(0, 90)]));
+      console.log(c.dim(`\nAdd one with: lvw skill add gh:${repo}/plugins/<name>. Its skills and subagents are installed.`));
       return;
     }
     case "rm":
@@ -228,4 +237,43 @@ export function pluginCommand() {
     plugins.map((p) => [p.error ? c.red("broken") : p.manifest.enabled === false ? c.dim("off") : c.green("on"), c.bold(p.manifest.name), p.error ?? p.manifest.description ?? "", c.dim(p.dir)]),
     ["", "name", "description", "folder"],
   );
+}
+
+const AGENTS_TEMPLATE = (manifests: string[]) => `# Agent instructions
+
+Start with the requested outcome and treat this repository as the record of truth. The map is in \`docs/README.md\`.
+
+- Stay within the requested scope. Looking at something doesn't authorize changing or running it.
+- Prefer pointing at source files over repeating them. Write down intent that code and tests can't express.
+- Say what you couldn't run or verify. Don't invent commands or claim results you didn't see.
+- Stop and ask when a request leaves a real product decision open.
+${manifests.length ? `\nBuild files found: ${manifests.join(", ")}. Add the exact build and test commands here once you have confirmed them.\n` : ""}`;
+
+const MAP_TEMPLATE = `# Repository map
+
+Fill this in as you learn the repository. Run the \`onboard-repository\` skill for an evidence-based first pass.
+
+| Question | Where to look |
+|---|---|
+| What is this and who is it for? | \`README.md\` |
+| How is it built and tested? | |
+| Where are the main entry points? | |
+| Why was it built this way? | |
+`;
+
+/** After hoangnb24/repository-harness: a small entry point and a map. Only adds what is missing. */
+export async function repoCommand(argv: string[]) {
+  const [cmd, dir = process.cwd()] = argv;
+  if (cmd !== "init") fail("lvw repo init [folder]");
+  const manifests = ["package.json", "go.mod", "Cargo.toml", "pyproject.toml", "Makefile", "pom.xml"].filter((f) => existsSync(join(dir, f)));
+  for (const [rel, text] of [["AGENTS.md", AGENTS_TEMPLATE(manifests)], ["docs/README.md", MAP_TEMPLATE]] as const) {
+    const p = join(dir, rel);
+    if (existsSync(p)) {
+      console.log(`${c.dim("kept")} ${rel}`);
+      continue;
+    }
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+    console.log(`${c.green("added")} ${rel}`);
+  }
 }

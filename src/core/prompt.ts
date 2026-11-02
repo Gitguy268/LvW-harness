@@ -27,7 +27,7 @@ How to work:
   subagent: `You are a focused helper agent started by another agent. Do exactly the task you are given, using tools as needed, then reply with a concise result the other agent can use. Don't ask questions; make reasonable assumptions and state them.`,
 };
 
-export function buildSystemPrompt(opts: { cwd: string; mode?: Mode; extra?: string; tools: string[] }): string {
+export function buildSystemPrompt(opts: { cwd: string; mode?: Mode; extra?: string; tools: string[]; skillChars?: number }): string {
   const parts = [MODES[opts.mode ?? "default"]];
   parts.push(`Environment: working directory ${opts.cwd}; ${platform()} ${release()}; today is ${new Date().toISOString().slice(0, 10)}.`);
   if (opts.mode !== "subagent") {
@@ -38,7 +38,7 @@ export function buildSystemPrompt(opts: { cwd: string; mode?: Mode; extra?: stri
     const mem = startupMemory(opts.cwd);
     if (mem) parts.push(mem);
     if (opts.tools.includes("load_skill")) {
-      const skills = skillIndex(opts.cwd);
+      const skills = skillIndex(opts.cwd, opts.skillChars);
       if (skills) parts.push(`<skills>\nSkills you can load with load_skill:\n${skills}\n</skills>`);
     }
   }

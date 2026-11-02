@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { getToken } from "../credentials.ts";
@@ -61,10 +61,14 @@ export function getSkill(name: string, cwd: string, includeDrafts = false) {
   return listSkills(cwd, includeDrafts).find((s) => s.name === name);
 }
 
-export function skillIndex(cwd: string): string {
+export function skillIndex(cwd: string, descriptionChars = 300): string {
   const skills = listSkills(cwd);
   if (!skills.length) return "";
-  return skills.map((s) => `- ${s.name}: ${s.description.slice(0, 300)}`).join("\n");
+  // Skills meant only for an explicit request cost a name, not a description, in every prompt.
+  const onRequest = skills.filter((s) => /^use only when the user explicitly/i.test(s.description));
+  const listed = skills.filter((s) => !onRequest.includes(s)).map((s) => `- ${s.name}: ${s.description.slice(0, descriptionChars)}`);
+  if (onRequest.length) listed.push(`Only when the user asks for one by name: ${onRequest.map((s) => s.name).join(", ")}`);
+  return listed.join("\n");
 }
 
 /** Copy the skills shipped inside the binary into ~/.lvw/skills, without touching ones already there. */
@@ -76,6 +80,7 @@ export function installBundledSkills(): number {
     for (const [rel, content] of Object.entries(filesMap)) {
       mkdirSync(dirname(join(dir, rel)), { recursive: true });
       writeFileSync(join(dir, rel), content);
+      if (content.startsWith("#!")) chmodSync(join(dir, rel), 0o755);
     }
     n++;
   }
@@ -116,6 +121,13 @@ function findSkillDirs(root: string): string[] {
   };
   walk(root, 0);
   return out;
+}
+
+/** Markdown agent definitions in an `agents` folder next to a plugin's skills. */
+function findAgentFiles(base: string): string[] {
+  const dir = join(base, "agents");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => join(dir, f));
 }
 
 function licenceOf(dir: string, repoRoot: string) {
@@ -168,7 +180,8 @@ export async function addSkills(spec: string, opts: { project?: string } = {}) {
     const base = sub ? join(root, sub) : root;
     if (!existsSync(base)) throw new Error(`${spec} has no folder "${sub}".`);
     const dirs = findSkillDirs(base);
-    if (!dirs.length) throw new Error(`No SKILL.md found in ${spec}.`);
+    const agentFiles = opts.project ? [] : findAgentFiles(base);
+    if (!dirs.length && !agentFiles.length) throw new Error(`No SKILL.md found in ${spec}.`);
     const target = opts.project ? join(opts.project, ".lvw", "skills") : paths().skills;
     mkdirSync(target, { recursive: true });
     const installed: { name: string; licence: string }[] = [];
@@ -182,8 +195,44 @@ export async function addSkills(spec: string, opts: { project?: string } = {}) {
       if (lic && !existsSync(join(dest, basename(lic.file)))) cpSync(lic.file, join(dest, "LICENSE"));
       installed.push({ name, licence: lic?.first ?? "no licence file found (all rights reserved: use with care)" });
     }
-    return { installed, from: relative(root, base) || "." };
+    const agents: string[] = [];
+    for (const file of agentFiles) {
+      agents.push(basename(file, ".md"));
+      cpSync(file, join(paths().agents, basename(file)));
+    }
+    return { installed, agents, from: relative(root, base) || "." };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+export interface NamedAgent {
+  name: string;
+  description: string;
+  prompt: string;
+}
+
+/** Named subagents: Markdown files in ~/.lvw/agents, or .lvw/agents in the project, which win. */
+export function listAgents(cwd: string): NamedAgent[] {
+  const byName = new Map<string, NamedAgent>();
+  for (const dir of [paths().agents, join(cwd, ".lvw", "agents")]) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".md")).sort()) {
+      const text = readFileSync(join(dir, f), "utf8");
+      const fm = parseFrontmatter(text);
+      const name = fm.name || basename(f, ".md");
+      byName.set(name, { name, description: fm.description ?? "", prompt: text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim() });
+    }
+  }
+  return [...byName.values()];
+}
+
+/** Plugins in a skills marketplace (wshobson/agents and others that use its format). */
+export async function browseMarketplace(repo: string): Promise<{ name: string; description: string; source: string }[]> {
+  const res = await fetch(`https://raw.githubusercontent.com/${repo}/HEAD/.claude-plugin/marketplace.json`);
+  if (!res.ok) throw new Error(`${repo} has no plugin list (HTTP ${res.status}).`);
+  const data = (await res.json()) as { plugins?: { name: string; description?: string; source?: unknown }[] };
+  return (data.plugins ?? [])
+    .filter((p) => typeof p.source === "string" && p.source.startsWith("./"))
+    .map((p) => ({ name: p.name, description: p.description ?? "", source: (p.source as string).slice(2) }));
 }

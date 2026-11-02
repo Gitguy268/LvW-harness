@@ -21,6 +21,8 @@ export interface Config {
   server: { host: string; port: number; token?: string };
   llama: { port: number; ctx: number; args: string[]; binary?: string };
   ollamaUrl: string;
+  /** Context window the Ollama server gives a model. Compaction and offloading are sized from it. */
+  ollamaCtx: number;
   /** Refuse downloads that would leave less than this much free disk. */
   minFreeGB: number;
   searxngUrl?: string;
@@ -38,6 +40,7 @@ export const DEFAULTS: Config = {
   server: { host: "127.0.0.1", port: 7878 },
   llama: { port: 7879, ctx: 8192, args: [] },
   ollamaUrl: process.env.OLLAMA_HOST ? normalizeOllama(process.env.OLLAMA_HOST) : "http://127.0.0.1:11434",
+  ollamaCtx: 32768,
   minFreeGB: 2,
   browser: { enabled: true, headless: true },
   budgets: { maxTurns: 40, maxTokens: 400_000 },

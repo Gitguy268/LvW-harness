@@ -1,3 +1,8 @@
+import { compactor } from "./compact.ts";
+import { isNoToolsError, isTransientError, MAX_RETRIES, RETRY_BASE_MS, sleep } from "./resilience.ts";
+import { listAgents } from "../skills/skills.ts";
+import { offloadLargeOutput } from "../tools/offload.ts";
+import { todoTool } from "../tools/todo.ts";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
@@ -82,7 +87,7 @@ export class Session {
   stopReason?: string;
   private allowed = new Set<string>();
 
-  private constructor(id: string, agent: Agent, ctx: ToolContext, tools: LvwTool[]) {
+  private constructor(id: string, agent: Agent, ctx: ToolContext, tools: LvwTool[], private warn: Warn) {
     this.id = id;
     this.agent = agent;
     this.ctx = ctx;
@@ -99,7 +104,7 @@ export class Session {
     const ctx: ToolContext = { cwd: opts.cwd, config, exec, sessionId: id, model: resolved, depth, taskId: opts.taskId };
 
     let tools: LvwTool[] = [...fsTools(ctx), ...shellTools(ctx), ...webTools(ctx), ...knowledgeTools(ctx), ...taskTools(ctx)];
-    if (depth === 0) tools.push(subagentTool(ctx, opts));
+    if (depth === 0) tools.push(subagentTool(ctx, opts), todoTool());
     // Each problem is reported once per process, not on every new chat.
     const warn: Warn = (msg) => {
       if (warned.has(msg)) return;
@@ -110,22 +115,24 @@ export class Session {
     for (const f of factories) tools.push(...(await f(ctx, warn)));
     if (opts.extraTools) tools.push(...(await opts.extraTools(ctx)));
     if (opts.only) tools = tools.filter((t) => opts.only!.includes(t.name));
+    tools = tools.map((t) => offloadLargeOutput(t, id, resolved.model.contextWindow));
 
     const saved = opts.sessionId ? loadMessages(opts.sessionId) : undefined;
     const mode = opts.permissions ?? config.permissions;
     const agent = new Agent({
       initialState: {
-        systemPrompt: buildSystemPrompt({ cwd: opts.cwd, mode: opts.mode, extra: opts.extraPrompt, tools: tools.map((t) => t.name) }),
+        systemPrompt: buildSystemPrompt({ cwd: opts.cwd, mode: opts.mode, extra: opts.extraPrompt, tools: tools.map((t) => t.name), skillChars: resolved.model.contextWindow <= 16_384 ? 110 : 300 }),
         model: resolved.model,
         tools,
         messages: saved ?? [],
       },
+      transformContext: compactor((context, signal) => resolved.models.completeSimple(resolved.model, context, { signal }), resolved.model.contextWindow),
       streamFn: resolved.models.streamSimple.bind(resolved.models),
       sessionId: id,
       identity: { attribution: null },
       toolExecution: "sequential",
     });
-    const session = new Session(id, agent, ctx, tools);
+    const session = new Session(id, agent, ctx, tools, warn);
 
     agent.beforeToolCall = async ({ toolCall, args }) => {
       const tool = tools.find((t) => t.name === toolCall.name);
@@ -168,7 +175,32 @@ export class Session {
   async prompt(text: string) {
     this.stopReason = undefined;
     await this.agent.prompt(text);
+    await this.recover();
     return lastAssistantText(this.agent.state.messages);
+  }
+
+  /** Retry a failed reply: transient provider errors with backoff, and once without tools for models that have none. */
+  private async recover() {
+    for (let attempt = 0; ; ) {
+      const last = this.agent.state.messages.at(-1) as { role: string; stopReason?: string; errorMessage?: string } | undefined;
+      if (last?.role !== "assistant" || last.stopReason !== "error") return;
+      const error = last.errorMessage ?? "";
+      if (isNoToolsError(error) && this.agent.state.tools.length) {
+        this.warn(`${this.ctx.model.label} can't use tools, so this chat runs without them.`);
+        this.agent.state.tools = [];
+        // The tool declarations travel in the leading system message, so they have to leave it too.
+        const [first, ...rest] = this.agent.state.messages;
+        if (first?.role === "system") {
+          const note = "\n\nThis model can't call tools here. Answer directly and don't mention tools.";
+          this.agent.state.messages = [{ ...first, toolsAdded: undefined, content: `${this.agent.state.systemPrompt}${note}` }, ...rest];
+        }
+      } else if (attempt < MAX_RETRIES && isTransientError(error)) {
+        await sleep(RETRY_BASE_MS * 2 ** attempt++);
+        if (this.stopReason) return;
+      } else return;
+      this.agent.state.messages = this.agent.state.messages.slice(0, -1);
+      await this.agent.continue();
+    }
   }
 
   abort() {
@@ -196,17 +228,23 @@ export function lastAssistantText(messages: AgentMessage[]): string {
 
 /** deer-flow-style delegation: a fresh agent with its own context and no further subagents. */
 function subagentTool(parent: ToolContext, opts: SessionOptions): LvwTool {
+  const named = listAgents(parent.cwd);
+  const specialists = named.slice(0, 20).map((a) => `${a.name} (${a.description.slice(0, 80)})`).join("; ");
   return defineTool({
     name: "subagent",
     label: "Delegate",
-    description: "Hand a self-contained subtask to a helper agent with a fresh context (research, reading many files, a side investigation). Returns its final answer.",
+    description: "Hand a self-contained subtask to a helper agent with a fresh context (research, reading many files, a side investigation). Returns its final answer." + (specialists ? ` Specialists for the agent field: ${specialists}` : ""),
     risk: "read",
     parameters: Type.Object({
       task: Type.String({ description: "Everything the helper needs to know; it can't see this conversation" }),
       tools: Type.Optional(Type.Array(Type.String(), { description: "Limit the helper to these tool names" })),
+      agent: Type.Optional(Type.String({ description: "A named specialist, if any are listed" })),
     }),
-    async execute({ task, tools }, signal) {
+    async execute({ task, tools, agent }, signal) {
+      const specialist = agent ? named.find((a) => a.name === agent) : undefined;
+      if (agent && !specialist) throw new Error(`No agent "${agent}". Available: ${named.map((a) => a.name).join(", ")}`);
       const child = await Session.create({
+        extraPrompt: specialist?.prompt,
         cwd: parent.cwd,
         resolved: parent.model,
         permissions: opts.permissions,

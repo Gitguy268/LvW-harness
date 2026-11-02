@@ -1,12 +1,12 @@
 /**
  * Compile `lvw` into single-file binaries in dist/.
  *   bun scripts/build.ts          this machine only (dist/lvw)
- *   bun scripts/build.ts --all    macOS arm64, Linux x64 and Linux arm64 (dist/lvw-<os>-<arch>)
+ *   bun scripts/build.ts --all    macOS, Linux and Windows (dist/lvw-<os>-<arch>). Windows is built but has never been run
  * chromium-bidi stays external: Playwright only loads it for Firefox/BiDi, and LvW drives Chromium over CDP.
  */
 import type { BunPlugin, Build } from "bun";
 
-const TARGETS = ["bun-darwin-arm64", "bun-linux-x64", "bun-linux-arm64"] as Build.CompileTarget[];
+const TARGETS = ["bun-darwin-arm64", "bun-darwin-x64", "bun-linux-x64", "bun-linux-arm64", "bun-windows-x64"] as Build.CompileTarget[];
 const all = process.argv.includes("--all");
 
 // Playwright requires these through computed paths, which the compiler leaves pointing at the build

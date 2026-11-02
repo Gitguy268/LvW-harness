@@ -48,7 +48,7 @@ export async function resolveChatModel(ref = loadConfig().model, onStatus?: (s: 
   }
   if (ref.startsWith("ollama:")) {
     const id = ref.slice(7);
-    const model = localModel("ollama", id, ollamaOpenAiUrl(), 32768);
+    const model = localModel("ollama", id, ollamaOpenAiUrl(), loadConfig().ollamaCtx);
     models.setProvider(createProvider({ id: "ollama", auth: keyless, models: [model], api: openAICompletionsApi() }));
     return { models, model, label: `${id} (Ollama)`, local: true };
   }

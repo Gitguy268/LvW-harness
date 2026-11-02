@@ -18,7 +18,8 @@ ${c.bold("Agent")}
   lvw improve "<task>" [--name p]                       experimental: tune a prompt profile (--profile p)
 
 ${c.bold("Extras")}
-  lvw skill ls|add|rm|show|approve   lvw memory ls|search|add|rm
+  lvw repo init                     add AGENTS.md and a repo map, keeping what exists
+  lvw skill ls|add|browse|rm|show|approve   lvw memory ls|search|add|rm
   lvw task ls|add|show|run|done      lvw task approve|reject <id>
   lvw routine ls|add|rm|on|off
   lvw mcp ls|add|rm                  lvw tool install|rm scrapling
@@ -67,6 +68,8 @@ async function main(argv: string[]) {
     case "skill":
     case "skills":
       return (await import("./extras.ts")).skillCommand(rest);
+    case "repo":
+      return (await import("./extras.ts")).repoCommand(rest);
     case "memory":
       return (await import("./extras.ts")).memoryCommand(rest);
     case "task":

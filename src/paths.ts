@@ -11,6 +11,7 @@ export function paths() {
     runtime: join(home, "runtime"),
     memory: join(home, "memory"),
     skills: join(home, "skills"),
+    agents: join(home, "agents"),
     plugins: join(home, "plugins"),
     profiles: join(home, "profiles"),
     logs: join(home, "logs"),
@@ -22,7 +23,7 @@ export function paths() {
 
 export function ensureDirs() {
   const p = paths();
-  for (const dir of [p.home, p.models, p.runtime, p.memory, p.skills, p.plugins, p.profiles, p.logs]) {
+  for (const dir of [p.home, p.models, p.runtime, p.memory, p.skills, p.agents, p.plugins, p.profiles, p.logs]) {
     mkdirSync(dir, { recursive: true });
   }
   return p;
