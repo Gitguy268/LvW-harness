@@ -1,6 +1,6 @@
 # LvW-harness server image: the lvw binary, a CPU llama-server and headless Chromium.
 # docker compose up -d   (see docker-compose.yml)   or   docker build --build-arg WITH_BROWSER=0 -t lvw .
-FROM oven/bun:1.4.3 AS build
+FROM oven/bun:1.4.4 AS build
 WORKDIR /src
 COPY package.json bun.lock bunfig.toml tsconfig.json ./
 RUN bun install --frozen-lockfile --production
