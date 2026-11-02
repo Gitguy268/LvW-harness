@@ -25,6 +25,35 @@ lvw chat
 lvw model rm Qwen3-4B-Instruct-2507-Q4_K_M                       # frees the 2.5 GB
 ```
 
+<!-- run-steps:start -->
+## Run it locally, step by step
+
+1. **Install [Bun](https://bun.sh) 1.4** or newer (macOS on Apple silicon, or Linux).
+
+2. **Get the code:**
+
+   ```sh
+   git clone https://github.com/Gitguy268/LvW-harness.git
+   cd LvW-harness
+   ```
+
+3. **Install it:**
+
+   ```sh
+   bun install
+   bun link
+   ```
+
+4. **Set it up.** This downloads llama-server (about 30 MB) and offers a starter model:
+
+   ```sh
+   lvw setup
+   lvw doctor
+   ```
+
+5. **Start it** with `lvw`, or double-click `start.command` on a Mac for the web UI at <http://localhost:7878/>.
+<!-- run-steps:end -->
+
 ## Install
 
 You need [Bun](https://bun.sh) 1.4 or newer on macOS (Apple silicon) or Linux.
