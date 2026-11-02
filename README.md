@@ -25,6 +25,10 @@ lvw chat
 lvw model rm Qwen3-4B-Instruct-2507-Q4_K_M                       # frees the 2.5 GB
 ```
 
+<!-- live-links -->
+**Project page:** [gitguy268.github.io/LvW-harness](https://gitguy268.github.io/LvW-harness/) · [lvw-harness.vercel.app](https://lvw-harness.vercel.app)
+<!-- /live-links -->
+
 <!-- run-steps:start -->
 ## Run it locally, step by step
 
