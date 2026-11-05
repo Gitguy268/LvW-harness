@@ -29,6 +29,15 @@ lvw model rm Qwen3-4B-Instruct-2507-Q4_K_M                       # frees the 2.5
 **Project page:** [gitguy268.github.io/LvW-harness](https://gitguy268.github.io/LvW-harness/) · [lvw-harness.vercel.app](https://lvw-harness.vercel.app)
 <!-- /live-links -->
 
+## Install with Homebrew
+
+```sh
+brew trust gitguy268/tap
+brew install gitguy268/tap/lvw-harness
+```
+
+Then run `lvw setup` once, and `lvw` (or `lvw serve` for the web UI).
+
 <!-- run-steps:start -->
 ## Run it locally, step by step
 
