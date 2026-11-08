@@ -8,6 +8,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { loadConfig, type Config, type PermissionMode } from "../config.ts";
 import { getDb } from "../db.ts";
+import { paths } from "../paths.ts";
 import { loadPlugins } from "../plugins/plugins.ts";
 import { dockerBackend, hostBackend, type ExecBackend } from "../sandbox/exec.ts";
 import { browserTools, closeBrowser, closeSpace } from "../tools/browser.ts";
@@ -68,11 +69,18 @@ export function registerToolFactory(f: ToolFactory) {
   factories.push(f);
 }
 
-let plugins: Promise<void> | undefined;
+// Plugins load once per plugins folder (tests and `LVW_HOME` changes get a fresh load).
+const pluginLoads = new Map<string, Promise<void>>();
 function loadPluginTools(warn: Warn) {
-  return (plugins ??= loadPlugins((name, err) => warn(`plugin "${name}" didn't load: ${err.message}`)).then((list) => {
-    for (const p of list) if (p.mod.tools) registerToolFactory(p.mod.tools);
-  }));
+  const dir = paths().plugins;
+  let load = pluginLoads.get(dir);
+  if (!load) {
+    load = loadPlugins((name, err) => warn(`plugin "${name}" didn't load: ${err.message}`)).then((list) => {
+      for (const p of list) if (p.mod.tools) registerToolFactory(p.mod.tools);
+    });
+    pluginLoads.set(dir, load);
+  }
+  return load;
 }
 
 /** Close the shared browser and MCP servers so the process can exit. */
