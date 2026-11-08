@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { paths } from "../paths.ts";
-import type { MediaEntry, MediaKind } from "./catalog.ts";
+import { findEntry, type MediaEntry, type MediaKind } from "./catalog.ts";
 
 export interface InstalledMedia {
   id: string;
@@ -18,6 +18,8 @@ export function installedMedia(id: string): InstalledMedia | undefined {
   const f = join(modelDir(id), "model.json");
   if (!existsSync(f)) return undefined;
   const m = JSON.parse(readFileSync(f, "utf8")) as InstalledMedia;
+  // Catalog fixes (args, defaults) apply to models downloaded before them.
+  m.entry = findEntry(id) ?? m.entry;
   // Paths are stored relative so a moved LVW_HOME still works.
   for (const k of Object.keys(m.files)) m.files[k] = join(modelDir(id), m.files[k]);
   return Object.values(m.files).every((p) => existsSync(p)) ? m : undefined;

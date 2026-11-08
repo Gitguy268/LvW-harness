@@ -3,7 +3,9 @@
   "entries": [
     {
       "id": "z-image-turbo",
-      "kinds": ["image"],
+      "kinds": [
+        "image"
+      ],
       "engine": "sdcpp",
       "name": "Z-Image-Turbo (Q3_K)",
       "licence": "Apache-2.0",
@@ -16,24 +18,49 @@
         "vae": "hf:Comfy-Org/Z-Image-Turbo/split_files/vae/ae.safetensors",
         "llm": "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
       },
-      "args": ["--offload-to-cpu"],
-      "defaults": { "steps": 8, "cfg": 1.0, "width": 768, "height": 768 }
+      "args": [
+        "--offload-to-cpu"
+      ],
+      "defaults": {
+        "steps": 8,
+        "cfg": 1.0,
+        "width": 768,
+        "height": 768
+      }
     },
     {
       "id": "sd15",
-      "kinds": ["image"],
+      "kinds": [
+        "image"
+      ],
       "engine": "sdcpp",
       "name": "Stable Diffusion 1.5 (Q4_0)",
       "licence": "CreativeML-OpenRAIL-M",
       "sizeGB": 1.6,
       "ramGB": 3,
-      "note": "Small and quick; older quality.",
-      "components": { "model": "hf:second-state/stable-diffusion-v1-5-GGUF/stable-diffusion-v1-5-pruned-emaonly-Q4_0.gguf" },
-      "defaults": { "steps": 20, "cfg": 7.0, "width": 512, "height": 512, "sampler": "euler_a" }
+      "note": "Small and quick on a GPU; older quality. On Macs it runs on the CPU (sd.cpp Metal renders SD 1.x blank).",
+      "components": {
+        "model": "hf:second-state/stable-diffusion-v1-5-GGUF/stable-diffusion-v1-5-pruned-emaonly-Q4_0.gguf"
+      },
+      "defaults": {
+        "steps": 20,
+        "cfg": 7.0,
+        "width": 512,
+        "height": 512,
+        "sampler": "euler_a"
+      },
+      "platformArgs": {
+        "darwin": [
+          "--backend",
+          "diffusion=cpu"
+        ]
+      }
     },
     {
       "id": "wan2.1-t2v-1.3b",
-      "kinds": ["video"],
+      "kinds": [
+        "video"
+      ],
       "engine": "sdcpp",
       "name": "Wan 2.1 text-to-video 1.3B",
       "licence": "Apache-2.0",
@@ -46,12 +73,27 @@
         "vae": "hf:Comfy-Org/Wan-2.1/split_files/vae/wan_2.1_vae.safetensors",
         "t5xxl": "hf:city96/umt5-xxl-encoder-gguf/umt5-xxl-encoder-Q3_K_S.gguf"
       },
-      "args": ["--offload-to-cpu", "--vae-tiling"],
-      "defaults": { "steps": 20, "cfg": 6.0, "width": 480, "height": 320, "frames": 17, "fps": 16, "flowShift": 3.0, "sampler": "euler" }
+      "args": [
+        "--offload-to-cpu",
+        "--vae-tiling"
+      ],
+      "defaults": {
+        "steps": 20,
+        "cfg": 6.0,
+        "width": 480,
+        "height": 320,
+        "frames": 17,
+        "fps": 16,
+        "flowShift": 3.0,
+        "sampler": "euler"
+      }
     },
     {
       "id": "lfm3-audio",
-      "kinds": ["speech", "transcribe"],
+      "kinds": [
+        "speech",
+        "transcribe"
+      ],
       "engine": "ollama",
       "ollama": "lfm3-audio",
       "name": "LFM3 Audio",
@@ -63,7 +105,9 @@
     },
     {
       "id": "phonon",
-      "kinds": ["speech"],
+      "kinds": [
+        "speech"
+      ],
       "engine": "ollama",
       "ollama": "phonon",
       "name": "Phonon (English voices)",
@@ -74,7 +118,9 @@
     },
     {
       "id": "lfm3-omni",
-      "kinds": ["listen"],
+      "kinds": [
+        "listen"
+      ],
       "engine": "ollama",
       "ollama": "lfm3-omni",
       "name": "LFM3 Omni",
@@ -86,7 +132,9 @@
     },
     {
       "id": "triposr",
-      "kinds": ["3d"],
+      "kinds": [
+        "3d"
+      ],
       "engine": "triposr",
       "name": "TripoSR",
       "licence": "MIT",
@@ -97,7 +145,9 @@
     },
     {
       "id": "ace-step-1.5",
-      "kinds": ["music"],
+      "kinds": [
+        "music"
+      ],
       "engine": "acestep",
       "name": "ACE-Step 1.5 (2B turbo)",
       "licence": "MIT",

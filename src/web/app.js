@@ -129,7 +129,7 @@ function showLogin() {
 
 // ---- pages -----------------------------------------------------------------
 
-const pages = { chat: chatPage, models: modelsPage, tasks: tasksPage, memory: memoryPage, skills: skillsPage, compare: comparePage };
+const pages = { chat: chatPage, create: createPage, models: modelsPage, tasks: tasksPage, memory: memoryPage, skills: skillsPage, compare: comparePage };
 let cleanup = () => {};
 
 function route() {
@@ -153,6 +153,116 @@ function onLive(fn) {
 function fitPill(fit) {
   if (!fit) return "";
   return h("span", { class: `pill ${fit === "fits" ? "fits" : fit === "tight" ? "tight" : "big"}` }, fit);
+}
+
+// Media ----------------------------------------------------------------------
+
+let viewerLoading;
+/** Load the vendored model-viewer only when a 3D result is on screen. */
+function loadViewer() {
+  return (viewerLoading ??= new Promise((resolve, reject) => {
+    const s = h("script", { src: "/vendor/model-viewer.min.js" });
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Couldn't load the 3D viewer."));
+    document.head.append(s);
+  }));
+}
+
+/** An inline player or viewer for a file under /media. */
+function mediaEl(m) {
+  const src = `/media/${m.rel.split("/").map(encodeURIComponent).join("/")}`;
+  const mime = m.mime ?? "";
+  let el;
+  if (mime.startsWith("image/")) el = h("img", { src, alt: m.prompt ?? m.kind ?? "image", loading: "lazy" });
+  else if (mime.startsWith("audio/")) el = h("audio", { src, controls: true, preload: "metadata" });
+  else if (mime.startsWith("video/")) el = h("video", { src, controls: true, loop: true, muted: true, playsinline: true, preload: "metadata" });
+  else if (mime === "model/gltf-binary") {
+    el = h("model-viewer", { src, "camera-controls": true, "auto-rotate": true, "shadow-intensity": "1", alt: m.prompt ?? "3D model" });
+    loadViewer().catch(fail);
+  } else if (m.text !== undefined) el = h("blockquote", {}, m.text || "(no speech found)");
+  else el = h("span", {}, m.rel);
+  return h("figure", { class: `media ${m.kind ?? ""}` }, el, h("figcaption", {}, h("a", { href: src, download: m.rel.split("/").pop() }, "Download")));
+}
+
+const readB64 = (file) =>
+  new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+
+/** 16-bit mono WAV from Float32 samples: what Ollama and llama.cpp read. */
+function wavFrom(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  v.setUint32(4, 36 + samples.length * 2, true);
+  str(8, "WAVEfmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, "data");
+  v.setUint32(40, samples.length * 2, true);
+  samples.forEach((x, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 0x7fff, true));
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+/** Record from the microphone; stop() resolves to a 16 kHz WAV blob. */
+async function recordMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rec = new MediaRecorder(stream);
+  const parts = [];
+  rec.ondataavailable = (e) => parts.push(e.data);
+  rec.start();
+  return {
+    stop: () =>
+      new Promise((resolve) => {
+        rec.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          const ctx = new OfflineAudioContext(1, 1, 16000);
+          const decoded = await ctx.decodeAudioData(await new Blob(parts).arrayBuffer());
+          const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+          const src = off.createBufferSource();
+          src.buffer = decoded;
+          src.connect(off.destination);
+          src.start();
+          resolve(wavFrom((await off.startRendering()).getChannelData(0), 16000));
+        };
+        rec.stop();
+      }),
+  };
+}
+
+/** Speak text with the speech engine and play it. */
+async function speakText(text, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const job = await api("/api/media/make", { method: "POST", body: { kind: "speech", prompt: text.slice(0, 4000) } });
+    const done = await waitMedia(job.id);
+    new Audio(`/media/${done.output.rel}`).play();
+  } catch (e) {
+    fail(e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/** Resolve when a media job finishes. */
+function waitMedia(id) {
+  return new Promise((resolve, reject) => {
+    const fn = (m) => {
+      if (m.type !== "media" || m.job.id !== id || m.job.status === "running") return;
+      listeners.delete(fn);
+      m.job.status === "done" ? resolve(m.job) : reject(new Error(m.job.error ?? m.job.status));
+    };
+    listeners.add(fn);
+  });
 }
 
 // Chat ------------------------------------------------------------------------
@@ -192,7 +302,24 @@ async function chatPage(root) {
   let currentText = "";
   const toolEls = new Map();
   const scroll = () => (transcript.scrollTop = transcript.scrollHeight);
-  const addUser = (text) => transcript.append(h("div", { class: "msg user" }, text));
+  const addUser = (text, files = []) =>
+    transcript.append(
+      h(
+        "div",
+        { class: "msg user" },
+        text,
+        files.length
+          ? h(
+              "div",
+              { class: "attached" },
+              files.map((f) => (f.mime.startsWith("image/") ? h("img", { src: `data:${f.mime};base64,${f.data}`, alt: f.name ?? "picture" }) : h("audio", { src: `data:${f.mime};base64,${f.data}`, controls: true }))),
+            )
+          : null,
+      ),
+    );
+  const addAssistant = (el, text) => {
+    el.append(h("button", { class: "small speak", title: "Read this aloud", onclick: (e) => speakText(text, e.currentTarget) }, "🔊"));
+  };
   const addTool = (id, name, args) => {
     const pre = h("pre", {}, JSON.stringify(args, null, 2));
     const el = h("details", { class: "tool" }, h("summary", {}, h("span", { class: "state" }), h("strong", {}, name), h("span", { class: "muted mono" }, summarize(args))), pre);
@@ -206,6 +333,8 @@ async function chatPage(root) {
     t.el.classList.add(isError ? "err" : "ok");
     const text = (result?.content ?? []).map((b) => b.text ?? `[${b.type}]`).join("\n");
     t.pre.textContent = `${JSON.stringify(t.args, null, 2)}\n\n${text}`;
+    const media = result?.details?.media;
+    if (!isError && media) t.el.after(mediaEl(media));
     const path = t.args?.path;
     if (!isError && typeof path === "string" && /\.(html?|svg|png|jpe?g|gif)$/i.test(path)) {
       t.el.querySelector("summary").append(h("button", { class: "small", onclick: (e) => (e.preventDefault(), showPreview(path)) }, "Preview"));
@@ -235,10 +364,18 @@ async function chatPage(root) {
     const messages = await api(`/api/sessions/${sessionId}`);
     const results = new Map(messages.filter((m) => m.role === "toolResult").map((m) => [m.toolCallId, m]));
     for (const m of messages) {
-      if (m.role === "user") addUser(typeof m.content === "string" ? m.content : m.content.map((b) => b.text ?? "").join(""));
+      if (m.role === "user")
+        addUser(
+          typeof m.content === "string" ? m.content : m.content.map((b) => b.text ?? "").join(""),
+          typeof m.content === "string" ? [] : m.content.filter((b) => b.type === "image").map((b) => ({ mime: b.mimeType, data: b.data })),
+        );
       if (m.role === "assistant") {
         for (const b of m.content ?? []) {
-          if (b.type === "text" && b.text.trim()) transcript.append(h("div", { class: "msg assistant", html: markdown(b.text) }));
+          if (b.type === "text" && b.text.trim()) {
+            const el = h("div", { class: "msg assistant", html: markdown(b.text) });
+            transcript.append(el);
+            addAssistant(el, b.text);
+          }
           if (b.type === "toolCall") {
             addTool(b.id, b.name, b.arguments);
             const r = results.get(b.id);
@@ -283,24 +420,95 @@ async function chatPage(root) {
       if (!current) transcript.append((current = h("div", { class: "msg assistant" })));
       current.innerHTML = markdown(currentText);
     }
+    if (ev.type === "message_end" && ev.message.role === "assistant" && current && currentText.trim()) addAssistant(current, currentText);
     if (ev.type === "message_end" && ev.message.role === "assistant" && ev.message.errorMessage && ev.message.stopReason !== "aborted") transcript.append(h("div", { class: "msg error" }, ev.message.errorMessage));
     if (ev.type === "tool_execution_start") addTool(ev.toolCallId, ev.toolName, ev.args);
     if (ev.type === "tool_execution_end") finishTool(ev.toolCallId, ev.result, ev.isError);
     scroll();
   });
 
+  // Pictures and voice notes: attach, paste, drop or record.
+  let files = [];
+  const chips = h("div", { class: "chips" });
+  const showChips = () =>
+    chips.replaceChildren(
+      ...files.map((f, i) =>
+        h("span", { class: "chip" }, f.mime.startsWith("image/") ? h("img", { src: `data:${f.mime};base64,${f.data}`, alt: "" }) : "🎤", f.name ?? f.mime, h("button", { class: "small", title: "Remove", onclick: () => (files.splice(i, 1), showChips()) }, "×")),
+      ),
+    );
+  const addFiles = async (list) => {
+    for (const f of list) {
+      if (!/^(image|audio)\//.test(f.type)) {
+        toast(`${f.name}: only pictures and audio can be attached.`);
+        continue;
+      }
+      if (f.size > 20 * 1024 * 1024) {
+        toast(`${f.name} is over 20 MB.`);
+        continue;
+      }
+      files.push({ name: f.name, mime: f.type, data: await readB64(f) });
+    }
+    showChips();
+  };
+  const picker = h("input", { type: "file", accept: "image/*,audio/*", multiple: true, hidden: true, onchange: () => addFiles(picker.files).then(() => (picker.value = "")) });
+  const attachBtn = h("button", { title: "Attach pictures or audio", "aria-label": "Attach", onclick: () => picker.click() }, "📎");
+  let recording = null;
+  const micBtn = h(
+    "button",
+    {
+      title: "Record a voice note",
+      "aria-label": "Record",
+      onclick: async () => {
+        try {
+          if (!recording) {
+            recording = await recordMic();
+            micBtn.classList.add("recording");
+            micBtn.textContent = "■";
+          } else {
+            const wav = await recording.stop();
+            recording = null;
+            micBtn.classList.remove("recording");
+            micBtn.textContent = "🎤";
+            files.push({ name: "voice note", mime: "audio/wav", data: await readB64(wav) });
+            showChips();
+          }
+        } catch (e) {
+          recording = null;
+          micBtn.textContent = "🎤";
+          fail(e);
+        }
+      },
+    },
+    "🎤",
+  );
+  input.addEventListener("paste", (e) => {
+    const pasted = [...(e.clipboardData?.files ?? [])];
+    if (pasted.length) {
+      e.preventDefault();
+      addFiles(pasted);
+    }
+  });
+  transcript.addEventListener("dragover", (e) => e.preventDefault());
+  transcript.addEventListener("drop", (e) => {
+    e.preventDefault();
+    addFiles([...(e.dataTransfer?.files ?? [])]);
+  });
+
   const submit = () => {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text && !files.length) return;
     if (!state.sessionId) {
       state.sessionId = crypto.randomUUID();
       history.replaceState(null, "", `#chat/${state.sessionId}`);
       transcript.replaceChildren();
     }
-    addUser(text);
+    addUser(text, files);
+    const attachments = files;
+    files = [];
+    showChips();
     input.value = "";
     setBusy(true);
-    send({ type: "chat", sessionId: state.sessionId, text, model: modelSel.value, permissions: permSel.value, cwd: cwd.value, mode: research.checked ? "research" : "default" });
+    send({ type: "chat", sessionId: state.sessionId, text, attachments, model: modelSel.value, permissions: permSel.value, cwd: cwd.value, mode: research.checked ? "research" : "default" });
     scroll();
   };
   sendBtn.onclick = submit;
@@ -314,7 +522,7 @@ async function chatPage(root) {
 
   chat.append(
     list,
-    h("section", { class: "convo" }, transcript, h("div", { class: "composer" }, input, h("div", { class: "row" }, modelSel, permSel, h("label", { class: "row", for: "research" }, research, "research"), cwd, stopBtn, sendBtn))),
+    h("section", { class: "convo" }, transcript, h("div", { class: "composer" }, chips, input, picker, h("div", { class: "row" }, attachBtn, micBtn, modelSel, permSel, h("label", { class: "row", for: "research" }, research, "research"), cwd, stopBtn, sendBtn))),
     previewPane,
   );
   root.replaceChildren(chat);
@@ -664,6 +872,168 @@ async function comparePage(root) {
     }
   };
   page.append(h("h1", {}, "Compare"), h("p", { class: "sub" }, "The same prompt to several models, side by side, without tools."), h("div", { class: "card" }, prompt, h("div", { class: "choices" }, picks), h("div", { class: "row" }, extra, h("button", { class: "primary", onclick: run }, "Compare"))), h("h2", {}, "Answers"), out);
+}
+
+// Create ----------------------------------------------------------------------
+
+const KINDS = [
+  { id: "image", label: "Image", hint: "Describe the picture: subject, style, light, framing.", input: "image/*", inputLabel: "Picture to edit (optional)" },
+  { id: "video", label: "Video", hint: "Describe the motion. A few seconds; slow without a GPU.", input: "image/*", inputLabel: "Picture to animate (optional)" },
+  { id: "speech", label: "Speech", hint: "Text to read aloud." },
+  { id: "transcribe", label: "Transcribe", hint: "Speech to text from a recording or an audio file.", input: "audio/*", inputLabel: "Audio file", noPrompt: true },
+  { id: "music", label: "Music", hint: "Genre, instruments, mood, tempo. Add lyrics for a song." },
+  { id: "3d", label: "3D", hint: "One object to turn into a 3D model, or upload a picture of it.", input: "image/*", inputLabel: "Picture of the object (optional)" },
+];
+
+async function createPage(root) {
+  const page = h("div", { class: "page create" });
+  root.replaceChildren(page);
+  let data = await api("/api/media");
+  let kind = KINDS.find((k) => k.id === location.hash.split("/")[1]) ?? KINDS[0];
+  let inputFile = null;
+
+  const tabs = h("div", { class: "tabs", role: "tablist" });
+  const hint = h("p", { class: "muted" });
+  const prompt = h("textarea", { rows: 3, "aria-label": "Prompt" });
+  const fileLabel = h("span", { class: "muted" });
+  const fileInput = h("input", { type: "file", "aria-label": "Input file", onchange: async () => (inputFile = fileInput.files[0] ? { mime: fileInput.files[0].type, data: await readB64(fileInput.files[0]) } : null) });
+  const fileRow = h("label", { class: "row" }, fileLabel, fileInput);
+  const modelSel = h("select", { "aria-label": "Model" });
+  const field = (name, label, type = "number", attrs = {}) => h("label", { class: "field" }, h("span", { class: "muted" }, label), h("input", { type, name, ...attrs }));
+  const opts = {
+    image: [field("width", "Width", "number", { step: 64, min: 256, placeholder: "auto" }), field("height", "Height", "number", { step: 64, min: 256, placeholder: "auto" }), field("steps", "Steps", "number", { min: 1, placeholder: "auto" }), field("seed", "Seed", "number", { placeholder: "random" })],
+    video: [field("frames", "Frames", "number", { min: 5, placeholder: "17" }), field("seed", "Seed", "number", { placeholder: "random" })],
+    speech: [field("voice", "Voice", "text", { placeholder: "default" })],
+    transcribe: [field("language", "Language", "text", { placeholder: "auto" }), h("label", { class: "field row" }, h("input", { type: "checkbox", name: "translate" }), "Translate to English")],
+    music: [field("seconds", "Seconds", "number", { min: 5, max: 240, placeholder: "30" }), h("label", { class: "field wide" }, h("span", { class: "muted" }, "Lyrics (empty = instrumental)"), h("textarea", { name: "lyrics", rows: 3, placeholder: "[verse]\n…\n[chorus]\n…" }))],
+    "3d": [field("seed", "Seed", "number", { placeholder: "random" })],
+  };
+  const optBox = h("div", { class: "opts" });
+  const makeBtn = h("button", { class: "primary" }, "Make");
+  let recording = null;
+  const recBtn = h("button", { hidden: true }, "🎤 Record");
+  const jobs = h("div", { class: "jobs" });
+  const gallery = h("div", { class: "gallery" });
+  const catalog = h("div", {});
+
+  function showKind() {
+    tabs.replaceChildren(...KINDS.map((k) => h("button", { role: "tab", "aria-selected": String(k === kind), class: k === kind ? "active" : "", onclick: () => ((kind = k), history.replaceState(null, "", `#create/${k.id}`), showKind()) }, k.label)));
+    hint.textContent = kind.hint;
+    prompt.hidden = Boolean(kind.noPrompt);
+    prompt.placeholder = kind.hint;
+    fileRow.hidden = !kind.input;
+    recBtn.hidden = kind.id !== "transcribe";
+    fileLabel.textContent = kind.inputLabel ?? "";
+    fileInput.accept = kind.input ?? "";
+    fileInput.value = "";
+    inputFile = null;
+    const fits = data.catalog.filter((e) => e.kinds.includes(kind.id));
+    modelSel.replaceChildren(h("option", { value: "" }, "best available"), ...fits.map((e) => h("option", { value: e.id }, `${e.name}${e.ready ? "" : " (not downloaded)"}`)), h("option", { value: "api" }, "hosted API"));
+    optBox.replaceChildren(...(opts[kind.id] ?? []));
+  }
+
+  recBtn.onclick = async () => {
+    try {
+      if (!recording) {
+        recording = await recordMic();
+        recBtn.textContent = "■ Stop";
+      } else {
+        const wav = await recording.stop();
+        recording = null;
+        recBtn.textContent = "🎤 Record";
+        inputFile = { mime: "audio/wav", data: await readB64(wav) };
+        toast("Recording ready. Press Make.");
+      }
+    } catch (e) {
+      recording = null;
+      recBtn.textContent = "🎤 Record";
+      fail(e);
+    }
+  };
+
+  makeBtn.onclick = async () => {
+    const body = { kind: kind.id, prompt: prompt.value.trim(), model: modelSel.value };
+    for (const el of optBox.querySelectorAll("[name]")) if (el.type === "checkbox" ? el.checked : el.value !== "") body[el.name] = el.type === "checkbox" ? el.checked : el.value;
+    if (inputFile) body[inputFile.mime.startsWith("audio/") ? "audio" : "image"] = inputFile.data;
+    if (kind.noPrompt ? !inputFile : !body.prompt && !(kind.id === "3d" && inputFile)) return toast(kind.noPrompt ? "Add or record audio first." : "Write a prompt first.");
+    try {
+      await api("/api/media/make", { method: "POST", body });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const jobEls = new Map();
+  function showJob(j) {
+    let el = jobEls.get(j.id);
+    if (!el) {
+      el = h("div", { class: "card job" });
+      jobEls.set(j.id, el);
+      jobs.prepend(el);
+    }
+    const pct = j.total ? Math.round((100 * (j.step ?? 0)) / j.total) : j.size ? Math.round((100 * (j.done ?? 0)) / j.size) : null;
+    el.replaceChildren(
+      h("div", { class: "row" }, h("strong", { class: "grow" }, `${j.action === "pull" ? "Downloading" : j.kind}: ${j.label}`), j.status === "running" ? h("button", { class: "small", onclick: () => api(`/api/jobs/${j.id}/cancel`, { method: "POST" }).catch(fail) }, "Cancel") : h("span", { class: `pill ${j.status === "done" ? "fits" : "big"}` }, j.status)),
+      j.status === "running" ? h("div", { class: "muted" }, `${j.note ?? "starting…"}${j.total ? ` · step ${j.step}/${j.total}` : ""}`) : null,
+      j.status === "running" && pct !== null ? h("progress", { max: 100, value: pct }) : null,
+      j.preview ? h("img", { class: "preview-step", src: `data:image/png;base64,${j.preview}`, alt: "preview" }) : null,
+      j.error ? h("p", { class: "err-text" }, j.error) : null,
+      j.output ? mediaEl({ ...j.output, prompt: j.label }) : null,
+    );
+    if (j.status !== "running" && j.action === "pull") refresh();
+    if (j.status === "done" && j.action === "make") setTimeout(() => (el.remove(), jobEls.delete(j.id), refresh()), 4000);
+  }
+
+  function showGallery() {
+    gallery.replaceChildren(
+      ...(data.outputs.length
+        ? data.outputs.map((o) =>
+            h(
+              "div",
+              { class: "card item" },
+              mediaEl({ ...o, prompt: o.meta?.prompt }),
+              h("div", { class: "row" }, h("span", { class: "muted grow", title: o.meta?.prompt ?? "" }, `${o.kind} · ${(o.meta?.prompt ?? o.text ?? "").slice(0, 70)}`), h("button", { class: "small danger", onclick: () => confirm("Delete this?") && api(`/api/media/out/${o.rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }).then(refresh, fail) }, "Delete")),
+            ),
+          )
+        : [h("div", { class: "empty" }, "Nothing made yet.")]),
+    );
+  }
+
+  function showCatalog() {
+    catalog.replaceChildren(
+      h(
+        "table",
+        {},
+        h("tbody", {}, data.catalog.map((e) => h("tr", {}, h("td", {}, h("strong", {}, e.name), h("div", { class: "muted" }, e.note ?? "")), h("td", { class: "muted" }, e.kinds.join(", ")), h("td", { class: "muted" }, `${e.sizeGB} GB · ${e.licence}`), h("td", { style: "text-align:right;white-space:nowrap" }, e.ready ? h("button", { class: "small danger", onclick: () => confirm(`Remove ${e.name}?`) && api(`/api/media/models/${encodeURIComponent(e.id)}`, { method: "DELETE" }).then(refresh, fail) }, "Remove") : h("button", { class: "small primary", onclick: () => api("/api/media/pull", { method: "POST", body: { id: e.id } }).catch(fail) }, "Get"))))),
+      ),
+      data.uv ? null : h("p", { class: "muted" }, "3D and music install with uv, which isn't on this machine: https://docs.astral.sh/uv/"),
+    );
+  }
+
+  async function refresh() {
+    data = await api("/api/media").catch(() => data);
+    showGallery();
+    showCatalog();
+    const keep = modelSel.value;
+    showKind();
+    modelSel.value = keep;
+  }
+
+  onLive((m) => m.type === "media" && showJob(m.job));
+  for (const j of data.jobs) if (j.status === "running") showJob(j);
+  page.append(
+    h("h1", {}, "Create"),
+    h("p", { class: "sub" }, "Pictures, clips, speech, music and 3D models, made on this machine. Everything lands in ~/.lvw/media."),
+    h("div", { class: "card" }, tabs, hint, prompt, fileRow, h("div", { class: "row" }, modelSel, recBtn, h("span", { class: "grow" }), makeBtn), optBox),
+    jobs,
+    h("h2", {}, "Made"),
+    gallery,
+    h("h2", {}, "Engines and models"),
+    catalog,
+  );
+  showKind();
+  showGallery();
+  showCatalog();
 }
 
 // ---- start -----------------------------------------------------------------

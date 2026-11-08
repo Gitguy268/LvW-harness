@@ -14,6 +14,7 @@ import { browserTools, closeBrowser, closeSpace } from "../tools/browser.ts";
 import { fsTools } from "../tools/fs.ts";
 import { knowledgeTools } from "../tools/knowledge.ts";
 import { closeMcp, mcpTools } from "../tools/mcp.ts";
+import { mediaTools } from "../tools/media.ts";
 import { scrapeTools } from "../tools/scrape.ts";
 import { taskTools } from "../tools/orchestra.ts";
 import { shellTools } from "../tools/shell.ts";
@@ -21,7 +22,7 @@ import { defineTool, type LvwTool, type ToolContext } from "../tools/tool.ts";
 import { webTools } from "../tools/web.ts";
 import { decide, summarize, type Asker } from "./permissions.ts";
 import { buildSystemPrompt, type Mode } from "./prompt.ts";
-import { resolveChatModel, type ResolvedChatModel } from "./providers.ts";
+import { audioPayload, resolveChatModel, type ResolvedChatModel } from "./providers.ts";
 
 export interface SessionOptions {
   cwd: string;
@@ -46,12 +47,20 @@ export interface SessionOptions {
   persist?: boolean;
 }
 
+export interface Attachment {
+  name?: string;
+  mime: string;
+  /** Base64 without the data: prefix. */
+  data: string;
+}
+
 export type ToolFactory = (ctx: ToolContext) => Promise<LvwTool[]> | LvwTool[];
 type Warn = (msg: string) => void;
 const warned = new Set<string>();
 const factories: ((ctx: ToolContext, warn: Warn) => Promise<LvwTool[]> | LvwTool[])[] = [
   (ctx) => (ctx.config.browser.enabled ? browserTools(ctx) : []),
   (ctx) => scrapeTools(ctx),
+  (ctx) => mediaTools(ctx),
   (ctx, warn) => mcpTools(ctx.config.mcpServers, ctx.cwd, (name, err) => warn(`MCP server "${name}" didn't start: ${err.message}`)),
 ];
 /** Add tools to every session from now on (what plugins do). */
@@ -128,6 +137,7 @@ export class Session {
       },
       transformContext: compactor((context, signal) => resolved.models.completeSimple(resolved.model, context, { signal }), resolved.model.contextWindow),
       streamFn: resolved.models.streamSimple.bind(resolved.models),
+      onPayload: resolved.senses?.hears ? (payload) => audioPayload(payload) : undefined,
       sessionId: id,
       identity: { attribution: null },
       toolExecution: "sequential",
@@ -172,9 +182,29 @@ export class Session {
     return this.agent.subscribe(fn);
   }
 
-  async prompt(text: string) {
+  /**
+   * Send a message. Pictures go to models that see; audio goes to models that hear and is
+   * transcribed for the rest, so a voice note always reaches the model as something it reads.
+   */
+  async prompt(text: string, attachments: Attachment[] = []) {
     this.stopReason = undefined;
-    await this.agent.prompt(text);
+    const senses = this.ctx.model.senses ?? { sees: false, hears: false };
+    const blocks: { type: "image"; data: string; mimeType: string }[] = [];
+    const notes: string[] = [];
+    for (const a of attachments) {
+      if (a.mime.startsWith("image/")) {
+        if (!senses.sees) this.warn(`${this.ctx.model.label} can't see pictures, so it gets a note that one was attached.`);
+        blocks.push({ type: "image", data: a.data, mimeType: a.mime });
+      } else if (a.mime.startsWith("audio/") && senses.hears) {
+        blocks.push({ type: "image", data: a.data, mimeType: a.mime });
+      } else if (a.mime.startsWith("audio/")) {
+        const { make } = await import("../media/make.ts");
+        const out = await make({ kind: "transcribe", audio: Buffer.from(a.data, "base64") });
+        notes.push(`[Voice note${a.name ? ` ${a.name}` : ""}, transcribed]: ${out.text}`);
+      } else notes.push(`[Attached file ${a.name ?? ""} (${a.mime}) can't be read here.]`);
+    }
+    const full = [...notes, text].filter(Boolean).join("\n\n");
+    await this.agent.prompt(full, blocks.length ? blocks : undefined);
     await this.recover();
     return lastAssistantText(this.agent.state.messages);
   }

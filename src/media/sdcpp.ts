@@ -140,7 +140,7 @@ export async function stopSd() {
 export function sdArgs(m: InstalledMedia, port: number): string[] {
   const args = ["--listen-ip", "127.0.0.1", "--listen-port", String(port)];
   for (const [flag, file] of Object.entries(m.files)) args.push(flag === "model" ? "-m" : `--${flag}`, file);
-  return [...args, ...(m.entry.args ?? []), ...loadConfig().media.sdArgs];
+  return [...args, ...(m.entry.args ?? []), ...(m.entry.platformArgs?.[platform()] ?? []), ...loadConfig().media.sdArgs];
 }
 
 /** Start sd-server with a model, or reuse the one already running it. Loading big models takes minutes. */

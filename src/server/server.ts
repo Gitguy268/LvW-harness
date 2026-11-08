@@ -5,7 +5,7 @@ import { extname, isAbsolute, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, saveConfig, type PermissionMode } from "../config.ts";
-import { deleteSession, getSessionMessages, listSessions } from "../core/session.ts";
+import { deleteSession, getSessionMessages, listSessions, type Attachment } from "../core/session.ts";
 import { fitFor, freeBytes } from "../models/disk.ts";
 import { searchHf } from "../models/hf.ts";
 import { diskUsage, gcApply, gcScan, listAll, removeModel, resolveSpec } from "../models/manager.ts";
@@ -21,6 +21,11 @@ import appJs from "../web/app.js" with { type: "text" };
 import indexHtmlBundle from "../web/index.html" with { type: "text" };
 import styleCss from "../web/style.css" with { type: "text" };
 import { hub, type HubMessage } from "./hub.ts";
+import { MEDIA_KINDS } from "../media/catalog.ts";
+import type { MakeRequest } from "../media/make.ts";
+import { findSdServer } from "../media/sdcpp.ts";
+import { listOutputs, mediaFile, mimeOf, removeOutput } from "../media/store.ts";
+import modelViewerJs from "../web/vendor/model-viewer.min.js" with { type: "text" };
 
 // Bun types .html imports as bundles; with type "text" it is the file's text.
 const indexHtml = indexHtmlBundle as unknown as string;
@@ -40,6 +45,13 @@ const PREVIEW_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".glb": "model/gltf-binary",
   ".css": "text/css",
   ".js": "text/javascript",
   ".md": "text/plain",
@@ -95,9 +107,68 @@ export function createServer(opts: ServeOptions) {
     port: opts.port,
     idleTimeout: 120,
     routes: {
-      "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; img-src 'self' data:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
+      "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
       "/app.js": () => new Response(appJs, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
       "/style.css": () => new Response(styleCss, { headers: { "content-type": "text/css; charset=utf-8" } }),
+      "/vendor/model-viewer.min.js": () => new Response(modelViewerJs, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "max-age=86400" } }),
+      "/media/*": guard((req) => {
+        const rel = decodeURIComponent(new URL(req.url).pathname.slice("/media/".length));
+        const p = mediaFile(rel);
+        if (!p) return bad("No such file.", 404);
+        return new Response(Bun.file(p), { headers: { "content-type": mimeOf(p), "content-security-policy": "sandbox; default-src 'none'", "x-content-type-options": "nosniff" } });
+      }),
+      "/api/media": guard(async () => {
+        const { mediaStatus } = await import("../media/make.ts");
+        return json({ catalog: await mediaStatus(), outputs: listOutputs(60), sdServer: Boolean(findSdServer()), uv: Boolean(Bun.which("uv")), jobs: [...hub.mediaJobs.values()].map(({ ctrl: _, ...j }) => j) });
+      }),
+      "/api/media/make": {
+        POST: guard(async (req) => {
+          const b = await body<MakeRequest & { image?: string; audio?: string }>(req);
+          if (!MEDIA_KINDS.includes(b.kind as never) || b.kind === ("listen" as never)) return bad("kind must be image, video, speech, transcribe, music or 3d");
+          const bytes = (s?: string) => (s ? new Uint8Array(Buffer.from(s.replace(/^data:[^,]*,/, ""), "base64")) : undefined);
+          const num = (v: unknown) => (v === undefined || v === null || v === "" ? undefined : Number(v));
+          return json(
+            hub.startMedia("make", {
+              kind: b.kind,
+              prompt: typeof b.prompt === "string" ? b.prompt : undefined,
+              image: bytes(b.image),
+              audio: bytes(b.audio),
+              model: b.model || undefined,
+              negative: b.negative || undefined,
+              width: num(b.width),
+              height: num(b.height),
+              steps: num(b.steps),
+              seed: num(b.seed),
+              frames: num(b.frames),
+              seconds: num(b.seconds),
+              voice: b.voice || undefined,
+              lyrics: b.lyrics || undefined,
+              language: b.language || undefined,
+              translate: Boolean(b.translate),
+            }),
+          );
+        }),
+      },
+      "/api/media/pull": {
+        POST: guard(async (req) => {
+          const b = await body<{ id?: string }>(req);
+          if (!b.id) return bad("id is required");
+          if (!findSdServer() && b.id) {
+            const { findEntry } = await import("../media/catalog.ts");
+            if (findEntry(b.id)?.engine === "sdcpp") await (await import("../media/sdcpp.ts")).installSd();
+          }
+          return json(hub.startMedia("pull", b.id));
+        }),
+      },
+      "/api/media/models/:id": {
+        DELETE: guard(async (req) => {
+          const { removeMedia } = await import("../media/make.ts");
+          return json({ removed: await removeMedia(decodeURIComponent(req.params.id)) });
+        }),
+      },
+      "/api/media/out/*": {
+        DELETE: guard((req) => json({ removed: removeOutput(decodeURIComponent(new URL(req.url).pathname.slice("/api/media/out/".length))) })),
+      },
       "/api/login": {
         POST: async (req: Request) => {
           if (!sameOrigin(req)) return bad("Cross-site request refused.", 403);
@@ -266,6 +337,7 @@ export function createServer(opts: ServeOptions) {
       return bad("Not found", 404);
     },
     websocket: {
+      maxPayloadLength: 32 * 1024 * 1024,
       open(ws: ServerWebSocket<{ off?: () => void }>) {
         ws.data.off = hub.on((m: HubMessage) => ws.send(JSON.stringify(m)));
       },
@@ -281,7 +353,7 @@ export function createServer(opts: ServeOptions) {
         }
         if (msg.type === "chat") {
           hub
-            .prompt({ text: String(msg.text ?? ""), sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
+            .prompt({ text: String(msg.text ?? ""), attachments: Array.isArray(msg.attachments) ? (msg.attachments as Attachment[]).filter((a) => typeof a?.data === "string" && typeof a?.mime === "string").slice(0, 8) : undefined, sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
             .catch((err: Error) => ws.send(JSON.stringify({ type: "error", sessionId: msg.sessionId, error: err.message })));
         } else if (msg.type === "abort") hub.abort(String(msg.sessionId));
         else if (msg.type === "approve") hub.answer(String(msg.id), (msg.answer as "yes" | "no" | "always") ?? "no");

@@ -11,3 +11,7 @@ declare module "*.py" {
   const text: string;
   export default text;
 }
+declare module "*/vendor/model-viewer.min.js" {
+  const text: string;
+  export default text;
+}

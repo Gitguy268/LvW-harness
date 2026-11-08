@@ -39,6 +39,8 @@ export interface MediaEntry {
   /** Ollama model name for engine "ollama". */
   ollama?: string;
   args?: string[];
+  /** Extra args per process.platform, e.g. {"darwin": ["--backend", "diffusion=cpu"]}. */
+  platformArgs?: Partial<Record<NodeJS.Platform, string[]>>;
   defaults?: MediaDefaults;
 }
 

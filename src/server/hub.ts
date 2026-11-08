@@ -2,9 +2,11 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { randomUUID } from "node:crypto";
 import type { PermissionMode } from "../config.ts";
 import type { Answer, ApprovalRequest } from "../core/permissions.ts";
-import { Session } from "../core/session.ts";
+import { Session, type Attachment } from "../core/session.ts";
 import { pull } from "../models/manager.ts";
 import type { ModelRecord } from "../models/types.ts";
+import type { MakeRequest } from "../media/make.ts";
+import type { MediaOutput } from "../media/store.ts";
 import { dueRoutines, markRun } from "../orchestra/routines.ts";
 import { createTask, getTask, updateTask } from "../orchestra/tasks.ts";
 
@@ -15,6 +17,7 @@ export type HubMessage =
   | { type: "approval"; id: string; sessionId: string; summary: string; tool: string }
   | { type: "approval_done"; id: string }
   | { type: "job"; job: Job }
+  | { type: "media"; job: MediaJob }
   | { type: "tasks" };
 
 export interface Job {
@@ -27,6 +30,23 @@ export interface Job {
   note?: string;
   error?: string;
   model?: ModelRecord;
+}
+
+/** A make or pull from the Create page. */
+export interface MediaJob {
+  id: string;
+  action: "make" | "pull";
+  kind?: string;
+  label: string;
+  status: "running" | "done" | "error" | "cancelled";
+  note?: string;
+  step?: number;
+  total?: number;
+  done?: number;
+  size?: number;
+  preview?: string;
+  output?: MediaOutput;
+  error?: string;
 }
 
 type Listener = (m: HubMessage) => void;
@@ -95,7 +115,7 @@ class Hub {
   }
 
   /** Send a prompt; events stream to every listener. */
-  async prompt(opts: Parameters<Hub["session"]>[0] & { text: string }) {
+  async prompt(opts: Parameters<Hub["session"]>[0] & { text: string; attachments?: Attachment[] }) {
     let s: Session;
     try {
       s = await this.session(opts);
@@ -107,7 +127,7 @@ class Hub {
     this.busy.add(s.id);
     this.emit({ type: "session", sessionId: s.id, state: "busy", label: s.ctx.model.label });
     try {
-      const answer = await s.prompt(opts.text);
+      const answer = await s.prompt(opts.text, opts.attachments);
       return { session: s, answer };
     } finally {
       this.busy.delete(s.id);
@@ -166,6 +186,56 @@ class Hub {
 
   cancelJob(id: string) {
     this.jobs.get(id)?.ctrl.abort();
+    this.mediaJobs.get(id)?.ctrl.abort();
+  }
+
+  mediaJobs = new Map<string, MediaJob & { ctrl: AbortController }>();
+
+  /** Run a make or a media pull in the background; progress goes to every listener. */
+  startMedia(action: "make" | "pull", arg: MakeRequest | string) {
+    const ctrl = new AbortController();
+    const label = typeof arg === "string" ? arg : (arg.prompt ?? arg.kind).slice(0, 80);
+    const job: MediaJob & { ctrl: AbortController } = { id: randomUUID(), action, kind: typeof arg === "string" ? undefined : arg.kind, label, status: "running", ctrl };
+    this.mediaJobs.set(job.id, job);
+    let last = 0;
+    const publish = (force = false) => {
+      if (!force && Date.now() - last < 300) return;
+      last = Date.now();
+      const { ctrl: _, ...plain } = job;
+      this.emit({ type: "media", job: plain });
+    };
+    const work: Promise<unknown> = import("../media/make.ts").then((m): Promise<unknown> =>
+      typeof arg === "string"
+        ? m.pullMedia(arg, {
+            signal: ctrl.signal,
+            onEvent: (e) => {
+              if (e.type === "status") job.note = e.text;
+              else Object.assign(job, { note: e.file, done: e.done, size: e.total });
+              publish();
+            },
+          })
+        : m.make(arg, {
+            signal: ctrl.signal,
+            onProgress: (p) => {
+              Object.assign(job, { note: p.status, step: p.step, total: p.total, preview: p.preview });
+              publish();
+            },
+          }),
+    );
+    work
+      .then((r) => {
+        job.status = "done";
+        job.preview = undefined;
+        if (action === "make") job.output = r as MediaOutput;
+      })
+      .catch((err: Error) => {
+        job.status = ctrl.signal.aborted ? "cancelled" : "error";
+        job.error = err.message;
+      })
+      .finally(() => publish(true));
+    publish(true);
+    const { ctrl: _, ...plain } = job;
+    return plain;
   }
 
   listJobs(): Job[] {
