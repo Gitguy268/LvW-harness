@@ -66,6 +66,18 @@ async function fetchSource(url: string, dest: string, strip: string) {
   if (tar.exitCode !== 0) throw new Error(`Couldn't unpack ${strip}: ${tar.stderr.toString()}`);
 }
 
+/** Weight downloads are long; a dropped connection shouldn't undo a finished package install. */
+async function retry<T>(fn: () => Promise<T>, times = 3): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= times) throw err;
+      await Bun.sleep(3000 * i);
+    }
+  }
+}
+
 export const sidecarInstalled = (name: SidecarName) => existsSync(join(dirOf(name), "ready"));
 
 export async function installSidecar(name: SidecarName, onLine?: (s: string) => void) {
@@ -86,17 +98,16 @@ export async function installSidecar(name: SidecarName, onLine?: (s: string) => 
       { env, onLine },
     );
     onLine?.("Downloading the TripoSR and background-removal weights…");
-    await run([py, "-c", "from huggingface_hub import hf_hub_download as d; d('stabilityai/TripoSR','config.yaml'); d('stabilityai/TripoSR','model.ckpt'); d('facebook/dino-vitb16','config.json'); import rembg; rembg.new_session()"], {
-      env,
-      onLine,
-    });
+    await retry(() =>
+      run([py, "-c", "from huggingface_hub import hf_hub_download as d; d('stabilityai/TripoSR','config.yaml'); d('stabilityai/TripoSR','model.ckpt'); d('facebook/dino-vitb16','config.json'); import rembg; rembg.new_session()"], { env, onLine }),
+    );
   } else {
     onLine?.("Downloading ACE-Step 1.5…");
     await fetchSource(`https://codeload.github.com/ace-step/ACE-Step-1.5/tar.gz/refs/tags/${ACESTEP_TAG}`, join(dir, "ace"), "ACE-Step");
     onLine?.("Installing ACE-Step's packages (several GB)…");
     await run([uv, "sync", "--python", "3.12"], { cwd: join(dir, "ace"), env, onLine });
     onLine?.("Downloading the ACE-Step weights…");
-    await run([uv, "run", "--no-sync", "acestep-download"], { cwd: join(dir, "ace"), env, onLine });
+    await retry(() => run([uv, "run", "--no-sync", "acestep-download"], { cwd: join(dir, "ace"), env, onLine }));
   }
   writeFileSync(join(dir, "ready"), new Date().toISOString());
 }
@@ -155,6 +166,8 @@ export async function startSidecar(name: SidecarName, onStatus?: (s: string) => 
   const dir = dirOf(name);
   const port = portOf(name);
   const env = sidecarEnv(name, true);
+  // Keep the script in step with this LvW version.
+  if (name === "3d") writeFileSync(join(dir, "media3d.py"), media3dPy);
   const argv =
     name === "3d"
       ? [bin(join(dir, "venv"), "python"), join(dir, "media3d.py"), "--port", String(port), "--tsr", join(dir, "triposr")]
@@ -188,7 +201,7 @@ export async function make3d(image: Uint8Array, opts: { removeBg?: boolean; reso
     body: JSON.stringify({ image: Buffer.from(image).toString("base64"), remove_bg: opts.removeBg ?? true, resolution: opts.resolution ?? 256 }),
     signal: opts.signal,
   });
-  if (!res.ok) throw new Error(`3D failed: ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.status}`);
+  if (!res.ok) throw new Error(`3D failed: ${(((await res.json().catch(() => ({}))) as { error?: string }).error ?? String(res.status)).replace(/^ValueError: /, "")}`);
   return new Uint8Array(await res.arrayBuffer());
 }
 

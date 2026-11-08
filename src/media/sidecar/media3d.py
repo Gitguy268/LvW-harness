@@ -80,7 +80,14 @@ class Engine:
                 self.device = "cpu"
                 self.model.to("cpu")
                 codes = self.model([image], device="cpu")
-            mesh = self.model.extract_mesh(codes, True, resolution=resolution)[0]
+            try:
+                mesh = self.model.extract_mesh(codes, True, resolution=resolution)[0]
+            except RuntimeError as e:
+                if "0 elements" not in str(e):
+                    raise
+                mesh = None
+        if mesh is None or len(mesh.vertices) == 0:
+            raise ValueError("No single object found in the picture. Use one object on a plain background, fully in view.")
         if mesh.volume < 0:
             mesh.invert()
         mesh = to_gradio_3d_orientation(mesh)

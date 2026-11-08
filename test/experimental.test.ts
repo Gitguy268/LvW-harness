@@ -110,4 +110,37 @@ describe("telegram", () => {
     expect(texts).toContainEqual([7, "Saved note.txt"]);
     expect(readFileSync(join(cwd, "note.txt"), "utf8")).toBe("hi");
   });
+
+  test("downloads a photo and hands it to the agent", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lvw-tg-"));
+    const queue: unknown[] = [{ update_id: 1, message: { chat: { id: 7 }, caption: "what is this?", photo: [{ file_id: "small", width: 90 }, { file_id: "big", width: 800 }] } }];
+    const sent: { method: string; body: Record<string, unknown> }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.startsWith("/file/botT/")) return new Response(new Uint8Array([0xff, 0xd8, 0xff]));
+        const method = path.split("/").pop()!;
+        const body = (await req.json()) as Record<string, unknown>;
+        if (method === "getUpdates") {
+          await Bun.sleep(20);
+          return Response.json({ ok: true, result: queue.splice(0) });
+        }
+        sent.push({ method, body });
+        if (method === "getFile") return Response.json({ ok: true, result: { file_path: `photos/${body.file_id}.jpg` } });
+        return Response.json({ ok: true, result: {} });
+      },
+    });
+    const { f, resolved } = faux();
+    resolved.senses = { sees: true, hears: false };
+    f.setResponses([fauxAssistantMessage([fauxText("A picture.")])]);
+    const ctrl = new AbortController();
+    const bot = runBot({ token: "T", allowed: [7], cwd, resolved, api: `http://127.0.0.1:${server.port}`, signal: ctrl.signal });
+    for (let i = 0; i < 100 && !sent.some((s) => s.body.text === "A picture."); i++) await Bun.sleep(30);
+    ctrl.abort();
+    await bot.catch(() => {});
+    server.stop(true);
+    expect(sent.find((s) => s.method === "getFile")?.body.file_id).toBe("big");
+    expect(sent.some((s) => s.body.text === "A picture.")).toBe(true);
+  });
 });

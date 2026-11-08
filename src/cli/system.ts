@@ -88,6 +88,18 @@ export async function doctorCommand() {
   const docker = Bun.which("docker");
   check("docker", docker ? true : "warn", docker ? "available for --sandbox docker" : "missing (optional sandbox)");
   check("git", Bun.which("git") ? true : "warn", Bun.which("git") ? "ok" : "missing: needed for skill add from git hosts");
+  const { mediaStatus } = await import("../media/make.ts");
+  const { findSdServer } = await import("../media/sdcpp.ts");
+  const sd = findSdServer();
+  check("sd-server", sd ? true : "warn", sd ?? "missing (optional): lvw media install image");
+  const media = await mediaStatus().catch(() => []);
+  const ready = (kind: string) => media.filter((m) => m.ready && m.kinds.includes(kind as never)).map((m) => m.id);
+  for (const kind of ["image", "video", "speech", "transcribe", "3d", "music"]) {
+    const ids = ready(kind);
+    check(`media: ${kind}`, ids.length ? true : "warn", ids.length ? ids.join(", ") : `not set up (optional): lvw media install ${kind}`);
+  }
+  check("uv", Bun.which("uv") ? true : "warn", Bun.which("uv") ? "ok" : "missing: needed for 3D and music");
+  check("ffmpeg", Bun.which("ffmpeg") ? true : "warn", Bun.which("ffmpeg") ? "ok" : "missing (optional): only WAV audio can be transcribed");
   for (const s of ["hf", "gh", "gl"] as const) check(`${s} token`, getToken(s) ? true : "warn", getToken(s) ? "set" : "not set (only for gated/private models)");
   table(rows);
 }

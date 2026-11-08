@@ -94,7 +94,7 @@ export async function make(req: MakeRequest, opts: MakeOptions = {}): Promise<Me
   if (kind === "3d" && !req.image) {
     if (!req.prompt?.trim()) throw new Error("3D needs a picture or a prompt.");
     say("Drawing the object first…");
-    const pic = await make({ kind: "image", prompt: `${req.prompt}, a single object, centered, whole object in view, plain light grey background, studio lighting`, seed: req.seed, width: 768, height: 768 }, opts);
+    const pic = await make({ kind: "image", prompt: `${req.prompt}, a single object, centered, whole object in view, plain light grey background, studio lighting`, seed: req.seed }, opts);
     const glb = await make({ ...req, image: new Uint8Array(await Bun.file(pic.path).arrayBuffer()) }, opts);
     glb.meta.sourceImage = pic.rel;
     return glb;

@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config.ts";
-import { Session, shutdownTools } from "../core/session.ts";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
+import { Session, shutdownTools, type Attachment } from "../core/session.ts";
+import { toWav } from "../media/api.ts";
 import type { Answer, Asker } from "../core/permissions.ts";
 import type { ResolvedChatModel } from "../core/providers.ts";
 import { getToken } from "../credentials.ts";
@@ -26,7 +29,14 @@ export interface BotOptions {
 
 interface Update {
   update_id: number;
-  message?: { chat: { id: number }; text?: string };
+  message?: {
+    chat: { id: number };
+    text?: string;
+    caption?: string;
+    photo?: { file_id: string; width: number }[];
+    voice?: { file_id: string; mime_type?: string };
+    audio?: { file_id: string; mime_type?: string; file_name?: string };
+  };
   callback_query?: { id: string; data?: string; message?: { chat: { id: number }; message_id: number } };
 }
 
@@ -56,6 +66,22 @@ export async function runBot(o: BotOptions) {
   const send = async (chat: number, text: string) => {
     for (const part of chunks(text)) await call("sendMessage", { chat_id: chat, text: part });
   };
+  /** Download a file the user sent. */
+  const fetchFile = async (fileId: string) => {
+    const f = await call<{ file_path: string }>("getFile", { file_id: fileId });
+    const res = await fetch(`${o.api ?? "https://api.telegram.org"}/file/bot${o.token}/${f.file_path}`, { signal: o.signal });
+    if (!res.ok) throw new Error(`Telegram file download failed (${res.status})`);
+    return new Uint8Array(await res.arrayBuffer());
+  };
+  /** Send a picture, clip, sound or mesh the agent made. */
+  const sendMedia = async (chat: number, m: { mime: string; path: string; kind: string }) => {
+    const [method, field] = m.mime.startsWith("image/") ? ["sendPhoto", "photo"] : m.mime.startsWith("video/") && m.mime !== "video/webm" ? ["sendVideo", "video"] : m.mime.startsWith("audio/") ? ["sendAudio", "audio"] : ["sendDocument", "document"];
+    const form = new FormData();
+    form.append("chat_id", String(chat));
+    form.append(field, new Blob([readFileSync(m.path)], { type: m.mime }), basename(m.path));
+    const res = await fetch(`${base}/${method}`, { method: "POST", body: form, signal: o.signal });
+    if (!((await res.json()) as { ok: boolean }).ok) await send(chat, `Made ${m.kind}: ${m.path}`);
+  };
 
   const sessions = new Map<number, Session>();
   const busy = new Set<number>();
@@ -76,12 +102,16 @@ export async function runBot(o: BotOptions) {
     let s = sessions.get(chat);
     if (!s) {
       s = await Session.create({ cwd: o.cwd, model: o.model, resolved: o.resolved, ask: askIn(chat), sessionId: `telegram-${chat}`, onStatus: log });
+      s.subscribe((ev) => {
+        const media = ev.type === "tool_execution_end" && !ev.isError ? (ev.result as { details?: { media?: { mime: string; path: string; kind: string } } })?.details?.media : undefined;
+        if (media && media.kind !== "transcribe") void sendMedia(chat, media).catch((err: Error) => log(`couldn't send media: ${err.message}`));
+      });
       sessions.set(chat, s);
     }
     return s;
   };
 
-  const handle = async (chat: number, text: string) => {
+  const handle = async (chat: number, text: string, files: Attachment[] = []) => {
     if (text === "/start") return send(chat, "Hi, I'm LvW. Send me a task. /new starts a fresh conversation, /stop cancels the current one.");
     if (text === "/stop") {
       sessions.get(chat)?.abort();
@@ -97,7 +127,7 @@ export async function runBot(o: BotOptions) {
     try {
       await call("sendChatAction", { chat_id: chat, action: "typing" }).catch(() => {});
       const s = await sessionFor(chat);
-      const answer = await s.prompt(text);
+      const answer = await s.prompt(text, files);
       await send(chat, s.stopReason ? `${answer}\n\n(stopped: ${s.stopReason})` : answer);
     } catch (err) {
       await send(chat, `Error: ${(err as Error).message}`);
@@ -129,16 +159,32 @@ export async function runBot(o: BotOptions) {
           continue;
         }
         const chat = u.message?.chat.id;
-        const text = u.message?.text?.trim();
-        if (chat === undefined || !text) continue;
+        const msg = u.message;
+        const text = (msg?.text ?? msg?.caption ?? "").trim();
+        const hasMedia = Boolean(msg?.photo?.length || msg?.voice || msg?.audio);
+        if (chat === undefined || (!text && !hasMedia)) continue;
         if (!o.allowed.includes(chat)) {
           log(`ignored chat ${chat} (not in telegram.allowedChatIds)`);
           await send(chat, `This bot is private. To allow this chat, run on the LvW machine:\n  lvw config set telegram.allowedChatIds '[${chat}]'`);
           continue;
         }
-        log(`chat ${chat}: ${text.slice(0, 80)}`);
+        log(`chat ${chat}: ${text.slice(0, 80)}${hasMedia ? " [+media]" : ""}`);
         // Don't wait: approvals for this run arrive as later updates.
-        void handle(chat, text);
+        void (async () => {
+          const files: Attachment[] = [];
+          try {
+            if (msg?.photo?.length) {
+              const best = msg.photo.reduce((a, b) => (b.width > a.width ? b : a));
+              files.push({ name: "photo.jpg", mime: "image/jpeg", data: Buffer.from(await fetchFile(best.file_id)).toString("base64") });
+            }
+            const sound = msg?.voice ?? msg?.audio;
+            // Voice notes are Ogg Opus; the local engines read WAV.
+            if (sound) files.push({ name: "voice note", mime: "audio/wav", data: Buffer.from(await toWav(await fetchFile(sound.file_id))).toString("base64") });
+          } catch (err) {
+            return send(chat, `Couldn't read that: ${(err as Error).message}`);
+          }
+          await handle(chat, text, files);
+        })();
       }
     }
   } finally {
