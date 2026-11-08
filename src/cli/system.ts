@@ -45,7 +45,7 @@ export async function runtimeCommand(argv: string[]) {
 
 export async function loginCommand(argv: string[], logout = false) {
   const service = argv[0] as Service;
-  if (!["hf", "gh", "gl", "telegram"].includes(service)) fail(`lvw ${logout ? "logout" : "login"} hf|gh|gl|telegram`);
+  if (!["hf", "gh", "gl", "telegram", "openai", "replicate"].includes(service)) fail(`lvw ${logout ? "logout" : "login"} hf|gh|gl|telegram|openai|replicate`);
   if (logout) {
     setToken(service, undefined);
     return console.log(`removed the ${service} token`);
@@ -55,6 +55,8 @@ export async function loginCommand(argv: string[], logout = false) {
     gh: "Create a read-only token at https://github.com/settings/tokens",
     gl: "Create a read-only token at https://gitlab.com/-/user_settings/personal_access_tokens",
     telegram: "Create a bot with @BotFather in Telegram and paste its token",
+    openai: "An API key for OpenAI or any OpenAI-compatible server (set media.api.openai.baseUrl for others). Used only as a media fallback",
+    replicate: "Create a token at https://replicate.com/account/api-tokens. Used only as a media fallback",
   }[service];
   console.log(c.dim(where));
   const token = await askSecret("Token: ");

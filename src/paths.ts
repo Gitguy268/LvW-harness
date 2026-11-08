@@ -15,6 +15,10 @@ export function paths() {
     plugins: join(home, "plugins"),
     profiles: join(home, "profiles"),
     logs: join(home, "logs"),
+    /** Images, audio, video and meshes LvW made. */
+    media: join(home, "media"),
+    /** Weights for image, video, 3D and music engines (chat models stay in models/). */
+    mediaModels: join(home, "media-models"),
     db: join(home, "lvw.db"),
     config: join(home, "config.json"),
     credentials: join(home, "credentials.json"),

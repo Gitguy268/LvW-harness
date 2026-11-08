@@ -7,3 +7,7 @@ declare module "*/web/app.js" {
   const text: string;
   export default text;
 }
+declare module "*.py" {
+  const text: string;
+  export default text;
+}

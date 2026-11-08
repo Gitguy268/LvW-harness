@@ -30,6 +30,25 @@ export interface Config {
   budgets: { maxTurns: number; maxTokens: number };
   mcpServers: Record<string, McpServerConfig>;
   telegram: { allowedChatIds: number[] };
+  media: MediaConfig;
+}
+
+export interface MediaConfig {
+  /** Ports for the local engines LvW starts. */
+  sdPort: number;
+  threeDPort: number;
+  musicPort: number;
+  /** Path to sd-server if you built it yourself. */
+  sdServer?: string;
+  /** Extra sd-server arguments, e.g. ["--flash-attn","on"]. */
+  sdArgs: string[];
+  /** Catalog ids to use per kind when none is given. */
+  defaults: Partial<Record<"image" | "video" | "speech" | "transcribe" | "listen" | "music" | "3d", string>>;
+  /** Hosted fallbacks, used only when no local engine is set up for a kind. Keys come from `lvw login openai|replicate` or the environment. */
+  api: {
+    openai?: { baseUrl?: string; image?: string; speech?: string; voice?: string; transcribe?: string };
+    replicate?: { image?: string; video?: string; music?: string; "3d"?: string };
+  };
 }
 
 export const DEFAULTS: Config = {
@@ -46,6 +65,7 @@ export const DEFAULTS: Config = {
   budgets: { maxTurns: 40, maxTokens: 400_000 },
   mcpServers: {},
   telegram: { allowedChatIds: [] },
+  media: { sdPort: 7880, threeDPort: 7881, musicPort: 7882, sdArgs: [], defaults: {}, api: {} },
 };
 
 function normalizeOllama(host: string) {

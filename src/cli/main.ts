@@ -7,7 +7,12 @@ const HELP = `${c.bold("lvw")} — LvW-harness ${pkg.version}, a local-first age
 ${c.bold("Models")}
   lvw model search|info|pull|ls|rm|du|gc|run|stop|use   download, run and remove models
   lvw runtime [install|update|rm]                         llama.cpp runtime
-  lvw login|logout hf|gh|gl|telegram                      tokens for gated models and the Telegram bot
+  lvw login|logout hf|gh|gl|telegram|openai|replicate   tokens for gated models, the Telegram bot and media APIs
+
+${c.bold("Media")}
+  lvw media ls|install|pull|rm|use|out|stop              image, video, speech, 3D and music engines
+  lvw make image|video|speech|music|3d "<prompt>"         make something (--image file for edits, image-to-video, image-to-3D)
+  lvw transcribe <audio-file>                           speech to text
 
 ${c.bold("Agent")}
   lvw chat [--model m] [--auto|--readonly] [--sandbox docker]   terminal chat
@@ -41,6 +46,12 @@ async function main(argv: string[]) {
       return (await import("./models.ts")).modelCommand(["ls", ...rest]);
     case "rm":
       return (await import("./models.ts")).modelCommand(["rm", ...rest]);
+    case "media":
+      return (await import("./media.ts")).mediaCommand(rest);
+    case "make":
+      return (await import("./media.ts")).makeCommand(rest);
+    case "transcribe":
+      return (await import("./media.ts")).transcribeCommand(rest);
     case "runtime":
       return (await import("./system.ts")).runtimeCommand(rest);
     case "login":
