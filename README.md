@@ -144,7 +144,7 @@ lvw login replicate
 lvw config set media.api.replicate '{"video":"owner/video-model","music":"owner/music-model","3d":"owner/3d-model"}'
 ```
 
-Replicate models take different inputs; LvW sends `prompt`, `image` and `duration`. `lvw make image "…" --model api` forces the fallback. The fallbacks have unit tests against a fake server but haven't been run with real keys.
+Replicate models take different inputs; LvW sends `prompt`, `image` and `duration`. `lvw make image "…" --model api` forces the fallback. The OpenAI-compatible fallback has unit tests against a fake server; the Replicate path has none. Neither has been run with real keys.
 </details>
 
 <details>
@@ -311,8 +311,8 @@ Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-se
 
 - Small local models (around 4B) handle short tasks well but get unreliable over long chains of tool calls. Hard coding work goes better with a bigger model or a cloud key.
 - Only GGUF models run locally through llama.cpp. Other formats are stored, not run.
-- Image and video generation is slow without a GPU: a 512×512 SD 1.5 picture takes about 4 minutes on a Mac's CPU. The stable-diffusion.cpp build LvW pins renders SD 1.x models blank on Apple GPUs, so SD 1.5 runs on the CPU there. Z-Image and Wan use other code paths.
-- Video, music and the Replicate/OpenAI fallbacks are written and unit-tested but have not had a full real run yet. Speech, transcription, voice notes in chat, picture to 3D and SD 1.5 images have.
+- Image and video generation is slow without a GPU: a 512×512 SD 1.5 picture takes about 4 minutes on a Mac's CPU. The stable-diffusion.cpp build LvW pins renders SD 1.x models blank on Apple GPUs, so SD 1.5 runs on the CPU there. Z-Image-Turbo, the default, works on Apple GPUs: about 3 minutes for a first 512×512 picture, model loading included.
+- Tested for real on a Mac (Apple silicon): Z-Image-Turbo and SD 1.5 images, speech, transcription, voice notes in chat, picture to 3D and text to 3D. Never run for real: Wan video, ACE-Step music, Linux and Windows, and the hosted fallbacks with real keys. Video only has a unit test of its request; music and Replicate have no tests.
 - 3D works on one object on a plain background. Landscapes and busy scenes give an error.
 - Transcription without ffmpeg reads WAV files only.
 - `--sandbox docker` covers shell commands only. File tools still work directly in the folder you started in.
