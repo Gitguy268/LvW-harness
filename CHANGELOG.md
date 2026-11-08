@@ -4,6 +4,10 @@
 
 First version.
 
+- Media: `lvw media`, `lvw make` and `lvw transcribe` make images and video (stable-diffusion.cpp), speech and transcripts (Ollama audio models), 3D models from a picture or a prompt (TripoSR) and music (ACE-Step 1.5). A hosted OpenAI-compatible or Replicate fallback is used for kinds that aren't set up locally.
+- The agent gets media tools for every kind that is set up. The web UI has a Create page with live previews and a gallery, a 3D viewer, and chat attachments with voice-note recording. Models that see or hear get pictures and audio directly; other models get a transcript of the audio.
+- `lvw telegram` takes photos and voice notes and sends back what the agent makes. `lvw doctor` reports the media engines.
+
 - Long chats compact themselves near the context limit. Large tool outputs go to a file with a preview. A `todo` tool keeps a checklist. Provider errors retry with backoff. Models without tool support run without tools.
 - 9 more skills: impeccable, five from repository-harness and three from wshobson/agents. `lvw skill browse` lists plugins, and `lvw skill add` also imports their agents as named subagents. `lvw repo init` adds an `AGENTS.md` and a repo map.
 - Binaries for Intel Macs and Windows are built too. Windows has never been run.

@@ -992,7 +992,7 @@ async function createPage(root) {
               "div",
               { class: "card item" },
               mediaEl({ ...o, prompt: o.meta?.prompt }),
-              h("div", { class: "row" }, h("span", { class: "muted grow", title: o.meta?.prompt ?? "" }, `${o.kind} · ${(o.meta?.prompt ?? o.text ?? "").slice(0, 70)}`), h("button", { class: "small danger", onclick: () => confirm("Delete this?") && api(`/api/media/out/${o.rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }).then(refresh, fail) }, "Delete")),
+              h("div", { class: "row" }, h("span", { class: "muted grow", title: o.meta?.prompt ?? "" }, `${o.kind} · ${(o.meta?.prompt ?? o.text ?? (o.kind === "3d" ? "from a picture" : "")).slice(0, 70)}`), h("button", { class: "small danger", onclick: () => confirm("Delete this?") && api(`/api/media/out/${o.rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }).then(refresh, fail) }, "Delete")),
             ),
           )
         : [h("div", { class: "empty" }, "Nothing made yet.")]),

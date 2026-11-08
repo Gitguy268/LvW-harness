@@ -107,7 +107,7 @@ export function createServer(opts: ServeOptions) {
     port: opts.port,
     idleTimeout: 120,
     routes: {
-      "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
+      "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
       "/app.js": () => new Response(appJs, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
       "/style.css": () => new Response(styleCss, { headers: { "content-type": "text/css; charset=utf-8" } }),
       "/vendor/model-viewer.min.js": () => new Response(modelViewerJs, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "max-age=86400" } }),

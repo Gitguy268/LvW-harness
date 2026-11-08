@@ -22,6 +22,12 @@ Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except
 | code-review-excellence, debugging-strategies, error-handling-patterns | [wshobson/agents](https://github.com/wshobson/agents) | MIT |
 | impeccable | [pbakaus/impeccable](https://github.com/pbakaus/impeccable), version 4.8.0 | Apache-2.0, with its `LICENSE` and `NOTICE.md` alongside. **Changed:** `SKILL.md` uses `<skill-base-dir>` in place of the `.pi/skills/...` path, and the live-mode scripts and font index (about 1.7 MB) are left out, so `live` needs a full copy from `lvw skill add gh:pbakaus/impeccable/.pi/skills/impeccable` |
 
+## Bundled in the web UI
+
+| Software | Licence | Where |
+|---|---|---|
+| [@google/model-viewer](https://github.com/google/model-viewer) 4.4.0 (UMD build, includes [three.js](https://github.com/mrdoob/three.js), MIT, and [fflate](https://github.com/101arrowz/fflate), MIT) | Apache-2.0 | `src/web/vendor/model-viewer.min.js`, licence text in `src/web/vendor/model-viewer.LICENSE`; loaded only when a 3D result is shown |
+
 ## Downloaded at run time (not part of this repository)
 
 | Software | Licence | When |
@@ -33,6 +39,12 @@ Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except
 | [Scrapling](https://github.com/D4Vinci/Scrapling) | BSD-3-Clause | optional; `lvw tool install scrapling` installs it with `uv` |
 | Chromium (Debian package) | BSD-3-Clause and others | the Docker image only |
 | Liberation fonts (Debian `fonts-liberation`) | SIL Open Font License 1.1 | the Docker image only, for page rendering |
+| [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) `sd-server` (release `master-1058-7bcd4ce`) | MIT | `lvw media install image` or `video`; checked against the sha256 digest GitHub publishes |
+| [TripoSR](https://github.com/VAST-AI-Research/TripoSR) source (commit `107cefd`) and weights `stabilityai/TripoSR` | MIT | `lvw media install 3d`. Run by LvW's own `src/media/sidecar/media3d.py`, which swaps its compiled `torchmcubes` for PyMCubes |
+| [PyTorch](https://pytorch.org), [transformers](https://github.com/huggingface/transformers), [trimesh](https://github.com/mikedh/trimesh), [PyMCubes](https://github.com/pmneila/PyMCubes) | BSD-3-Clause, Apache-2.0, MIT, BSD-3-Clause | the 3D engine's venv |
+| [rembg](https://github.com/danielgatis/rembg) and its U²-Net weights | MIT, Apache-2.0 | the 3D engine's venv, for background removal |
+| [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) code (tag `v0.1.8`) and weights | MIT | `lvw media install music`, with its own `uv sync` |
+| Media models (Z-Image-Turbo, Qwen3-4B text encoder, FLUX VAE via Comfy-Org, SD 1.5 GGUF, Wan 2.1 1.3B, UMT5-XXL GGUF, LFM3 Audio/Omni, Phonon) | Apache-2.0; SD 1.5: CreativeML OpenRAIL-M; LFM models: LFM Open License 1.0; Phonon voices: partly CC BY-NC 4.0 | `lvw media pull`; each licence is shown in `lvw media ls` |
 | Models from Hugging Face, GitHub, GitLab or Ollama | each model's own licence | `lvw model pull` |
 
 ## Ideas, no code

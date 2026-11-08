@@ -4,7 +4,7 @@
 
 **A local-first AI agent with a one-command model manager for Hugging Face, GitHub and GitLab.**
 
-[Install](#install) · [Models](#models) · [Agent](#agent) · [Web UI](#web-ui) · [VPS](#vps) · [Commands](#all-commands) · [Credits](NOTICE.md)
+[Install](#install) · [Models](#models) · [Media](#media) · [Agent](#agent) · [Web UI](#web-ui) · [VPS](#vps) · [Commands](#all-commands) · [Credits](NOTICE.md)
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-2f6f62)
 ![Runtime: Bun 1.4](https://img.shields.io/badge/runtime-Bun%201.4-2f6f62)
@@ -15,7 +15,7 @@
 
 </div>
 
-LvW runs an agent on your own computer or server. It reads and edits files, runs commands, browses the web, remembers things between sessions and follows skills. Models run locally through [llama.cpp](https://github.com/ggml-org/llama.cpp) or [Ollama](https://ollama.com), so nothing has to leave your machine. Cloud models work too if you add a key.
+LvW runs an agent on your own computer or server. It reads and edits files, runs commands, browses the web, remembers things between sessions and follows skills. It also makes pictures, short videos, speech, music and 3D models, and it understands pictures and voice notes you send it. Models run locally through [llama.cpp](https://github.com/ggml-org/llama.cpp) or [Ollama](https://ollama.com), so nothing has to leave your machine. Cloud models work too if you add a key.
 
 The model manager is the main feature. One command downloads a model from Hugging Face, a GitHub or GitLab release, any URL or Ollama, and one command removes it again with every file it brought.
 
@@ -104,6 +104,63 @@ To build a single binary that doesn't need Bun: `bun run build` (this machine) o
 
 Gated or private models need a read token: `lvw login hf|gh|gl`, or `HF_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`. Tokens are stored in `~/.lvw/credentials.json` with mode 600 and are never logged.
 
+## Media
+
+LvW makes images, video, speech, music and 3D models, and transcribes audio, on your own machine. Each kind has a small default model you add with one command. A hosted API is used only for a kind you haven't set up locally, and only when you have added a key for it.
+
+```sh
+lvw media install image            # stable-diffusion.cpp plus Z-Image-Turbo (6 GB)
+lvw make image "a red lighthouse on a cliff at sunset, oil painting"
+lvw make 3d "a small toy robot"    # draws the robot first, then builds a GLB mesh
+lvw make speech "Dinner is ready." --voice female-american-english
+lvw transcribe meeting.wav
+lvw media ls                       # what is set up, with sizes and licences
+```
+
+| Kind | Local engine | Default model | Licence |
+|---|---|---|---|
+| Image (text to image, picture editing) | [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) `sd-server` | Z-Image-Turbo Q3_K (6 GB). SD 1.5 (1.6 GB) is a smaller option | Apache-2.0 |
+| Video (text to video, picture to video) | the same `sd-server` | Wan 2.1 T2V 1.3B (6 GB) | Apache-2.0 |
+| Speech and transcription | [Ollama](https://ollama.com) 0.40.13 or later | `lfm3-audio` (1.7 GB, 18 languages). `phonon` is a tiny English voice for Apple silicon | LFM Open 1.0 |
+| Pictures and voice notes in chat | Ollama or llama.cpp | any model that sees or hears, such as `lfm3-omni` | the model's own |
+| 3D (picture to 3D, text to 3D) | [TripoSR](https://github.com/VAST-AI-Research/TripoSR) in a uv-made Python env | TripoSR (1.7 GB) | MIT |
+| Music and sound | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) in a uv-made Python env | ACE-Step 1.5 2B turbo (about 9 GB) | MIT |
+
+- **In chat**, the agent gets `generate_image`, `generate_video`, `speak`, `transcribe`, `generate_music` and `generate_3d` tools for every kind that is set up. The results show up inline in the web UI and arrive as files in Telegram.
+- **Pictures and voice notes** can be attached, pasted, dropped or recorded in the web chat, and sent to the Telegram bot. A model that hears gets the audio itself. For any other model, the audio is transcribed first, so the voice note still reaches it as text.
+- **Create page** in the web UI: pick a kind, write a prompt or add a file, watch the steps and a live preview, and keep everything in a gallery. 3D models open in a viewer you can turn.
+- Results are saved in `~/.lvw/media/<date>/`, each with a `.json` beside it holding the prompt, model, seed and settings.
+
+<details>
+<summary><b>Hosted fallbacks</b></summary>
+
+Set these only if you want a kind to work without a local engine. Keys come from `lvw login openai|replicate` or `OPENAI_API_KEY` / `REPLICATE_API_TOKEN`.
+
+```sh
+lvw login openai
+lvw config set media.api.openai '{"image":"gpt-image-1","speech":"tts-1","voice":"alloy","transcribe":"whisper-1"}'
+lvw config set media.api.openai.baseUrl https://your-openai-compatible-server/v1   # optional
+lvw login replicate
+lvw config set media.api.replicate '{"video":"owner/video-model","music":"owner/music-model","3d":"owner/3d-model"}'
+```
+
+Replicate models take different inputs; LvW sends `prompt`, `image` and `duration`. `lvw make image "…" --model api` forces the fallback. The fallbacks have unit tests against a fake server but haven't been run with real keys.
+</details>
+
+<details>
+<summary><b>Models, engines and where they run</b></summary>
+
+`lvw media install <kind>` sets up the engine and the default model for a kind; `lvw media pull <id>` gets another catalog model; `lvw media use <kind> <id>` changes the default; `lvw media rm <id>` removes it. Add your own sd.cpp models in `~/.lvw/media-catalog.json`, which uses the same format as [src/media/catalog.json](src/media/catalog.json).
+
+| | macOS arm64 | macOS x64 | Linux x64 | Linux arm64 | Windows x64 |
+|---|---|---|---|---|---|
+| Image and video | local | local | local (CPU or Vulkan) | hosted API, or build `sd-server` yourself and set `media.sdServer` | local (CPU, Vulkan or CUDA) |
+| Speech and transcription | local | local | local | local | local |
+| 3D and music | local (Apple GPU) | hosted API (no PyTorch wheels) | local | local | local |
+
+Pick a GPU build of `sd-server` with `lvw media install sd --variant vulkan` (Linux) or `--variant cuda12` (Windows). Ports: `sd-server` 7880, 3D 7881, music 7882.
+</details>
+
 ## Agent
 
 ```sh
@@ -164,7 +221,7 @@ To let the browser tools use your logged-in browser, start it with `--remote-deb
 lvw serve                          # http://127.0.0.1:7878
 ```
 
-The web UI has pages for Chat (with approval cards and a preview of HTML or SVG the agent writes), Models, Tasks, Memory, Skills and Compare (one prompt sent to several models side by side). It loads nothing from the internet and works offline.
+The web UI has pages for Chat (with approval cards, attachments, voice notes and a preview of HTML or SVG the agent writes), Create (images, video, speech, music and 3D), Models, Tasks, Memory, Skills and Compare (one prompt sent to several models side by side). It loads nothing from the internet and works offline.
 
 <table>
 <tr>
@@ -212,7 +269,7 @@ Caddy gets the certificate itself. Open `https://lvw.example.com` and log in wit
 
 ## Experimental
 
-- **`lvw telegram`** runs a Telegram bot, so you can talk to LvW from your phone. Create a bot with @BotFather, run `lvw login telegram`, then message the bot: it replies with the command that allows your chat. Approvals show up as Yes / Always / No buttons. The bot polls Telegram, so it needs no public address.
+- **`lvw telegram`** runs a Telegram bot, so you can talk to LvW from your phone. Create a bot with @BotFather, run `lvw login telegram`, then message the bot: it replies with the command that allows your chat. Approvals show up as Yes / Always / No buttons. Photos and voice notes work too, and the pictures, sounds and clips the agent makes come back as files. The bot polls Telegram, so it needs no public address.
 - **`lvw improve "<task>" --name p`** runs the same task with four prompt strategies (baseline, plan-first, verify, lean), each in a scratch copy of the folder, has the model grade every result, and saves the winner as a profile you use with `lvw run --profile p`. The grades are only as good as the model giving them.
 
 ## All commands
@@ -221,7 +278,12 @@ Caddy gets the certificate itself. Open `https://lvw.example.com` and log in wit
 Models
   lvw model search|info|pull|ls|rm|du|gc|run|stop|use   download, run and remove models
   lvw runtime [install|update|rm]                         llama.cpp runtime
-  lvw login|logout hf|gh|gl|telegram                      tokens for gated models and the Telegram bot
+  lvw login|logout hf|gh|gl|telegram|openai|replicate   tokens for gated models, the Telegram bot and media APIs
+
+Media
+  lvw media ls|install|pull|rm|use|out|stop              image, video, speech, 3D and music engines
+  lvw make image|video|speech|music|3d "<prompt>"         make something (--image file for edits, picture to video, picture to 3D)
+  lvw transcribe <audio-file>                           speech to text
 
 Agent
   lvw chat [--model m] [--auto|--readonly] [--sandbox docker]   terminal chat
@@ -243,12 +305,16 @@ Setup
   lvw setup [--yes]   lvw doctor   lvw config [get|set|path]   lvw version
 ```
 
-Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-server 7879.
+Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-server 7879, sd-server 7880, 3D 7881, music 7882.
 
 ## Limits
 
 - Small local models (around 4B) handle short tasks well but get unreliable over long chains of tool calls. Hard coding work goes better with a bigger model or a cloud key.
 - Only GGUF models run locally through llama.cpp. Other formats are stored, not run.
+- Image and video generation is slow without a GPU: a 512×512 SD 1.5 picture takes about 4 minutes on a Mac's CPU. The stable-diffusion.cpp build LvW pins renders SD 1.x models blank on Apple GPUs, so SD 1.5 runs on the CPU there. Z-Image and Wan use other code paths.
+- Video, music and the Replicate/OpenAI fallbacks are written and unit-tested but have not had a full real run yet. Speech, transcription, voice notes in chat, picture to 3D and SD 1.5 images have.
+- 3D works on one object on a plain background. Landscapes and busy scenes give an error.
+- Transcription without ffmpeg reads WAV files only.
 - `--sandbox docker` covers shell commands only. File tools still work directly in the folder you started in.
 
 ## Contributing and licence
