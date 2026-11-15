@@ -23,7 +23,7 @@ import { defineTool, type LvwTool, type ToolContext } from "../tools/tool.ts";
 import { webTools } from "../tools/web.ts";
 import { decide, summarize, type Asker } from "./permissions.ts";
 import { buildSystemPrompt, type Mode } from "./prompt.ts";
-import { audioPayload, resolveChatModel, type ResolvedChatModel } from "./providers.ts";
+import { attachVisionModel, audioPayload, resolveChatModel, type ResolvedChatModel } from "./providers.ts";
 
 export interface SessionOptions {
   cwd: string;
@@ -201,7 +201,7 @@ export class Session {
     const notes: string[] = [];
     for (const a of attachments) {
       if (a.mime.startsWith("image/")) {
-        if (!senses.sees) this.warn(`${this.ctx.model.label} can't see pictures, so it gets a note that one was attached.`);
+        if (!senses.sees && !this.ctx.config.visionModel) this.warn(`${this.ctx.model.label} can't see pictures, so it gets a note that one was attached. Set a vision model with \`lvw setup\` to fix that.`);
         blocks.push({ type: "image", data: a.data, mimeType: a.mime });
       } else if (a.mime.startsWith("audio/") && senses.hears) {
         blocks.push({ type: "image", data: a.data, mimeType: a.mime });
@@ -212,8 +212,17 @@ export class Session {
       } else notes.push(`[Attached file ${a.name ?? ""} (${a.mime}) can't be read here.]`);
     }
     const full = [...notes, text].filter(Boolean).join("\n\n");
-    await this.agent.prompt(full, blocks.length ? blocks : undefined);
-    await this.recover();
+    // A picture for a model that can't see goes to the vision model for this turn.
+    const hasImage = blocks.some((b) => b.mimeType.startsWith("image/"));
+    const vision = hasImage && !senses.sees ? await attachVisionModel(this.ctx.model, this.ctx.model.local ? (s) => this.warn(s) : undefined).catch((err: Error) => (this.warn(err.message), undefined)) : undefined;
+    const chatModel = this.agent.state.model;
+    if (vision) this.agent.state.model = vision;
+    try {
+      await this.agent.prompt(full, blocks.length ? blocks : undefined);
+      await this.recover();
+    } finally {
+      this.agent.state.model = chatModel;
+    }
     return lastAssistantText(this.agent.state.messages);
   }
 

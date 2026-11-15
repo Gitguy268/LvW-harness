@@ -64,6 +64,9 @@ export interface ServeOptions {
   port: number;
   token?: string;
   cwd: string;
+  /** Lets the web pages in server.allowOrigins connect with this token (`lvw serve --allow-web`). */
+  webToken?: string;
+  allowOrigins?: string[];
 }
 
 export function createServer(opts: ServeOptions) {
@@ -89,10 +92,52 @@ export function createServer(opts: ServeOptions) {
       return false;
     }
   };
+  // Connect mode: a page from an allowed origin (the LvW web UI) may call the API, but only with
+  // the web token, even on loopback. Browsers can't set headers on WebSockets, so /ws takes ?token=.
+  const allowOrigins = new Set(opts.allowOrigins ?? []);
+  const webOrigin = (req: Request) => {
+    const origin = req.headers.get("origin");
+    return origin && allowOrigins.has(origin) && !sameOrigin(req) ? origin : undefined;
+  };
+  const webAuthed = (req: Request) => {
+    if (!opts.webToken) return false;
+    const header = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    const given = header ?? new URL(req.url).searchParams.get("token") ?? undefined;
+    return Boolean(given && (safeEqual(given, opts.webToken) || (opts.token && safeEqual(given, opts.token))));
+  };
+  const cors = (origin: string, res: Response) => {
+    res.headers.set("access-control-allow-origin", origin);
+    res.headers.set("vary", "Origin");
+    return res;
+  };
+  const preflight = (req: Request, origin: string) =>
+    cors(
+      origin,
+      new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-headers": "authorization, content-type",
+          "access-control-max-age": "600",
+          ...(req.headers.get("access-control-request-private-network") === "true" ? { "access-control-allow-private-network": "true" } : {}),
+        },
+      }),
+    );
   const body = async <T>(req: Request) => (await req.json().catch(() => ({}))) as T;
   const guard =
     (fn: (req: Request & { params: Record<string, string> }) => Response | Promise<Response>) =>
     async (req: Request & { params: Record<string, string> }) => {
+      const web = webOrigin(req);
+      if (web) {
+        if (req.method === "OPTIONS") return preflight(req, web);
+        if (!opts.webToken) return cors(web, bad("This LvW-harness doesn't accept web connections. Start it with `lvw serve --allow-web`.", 403));
+        if (!webAuthed(req)) return cors(web, bad("Wrong or missing token.", 401));
+        try {
+          return cors(web, await fn(req));
+        } catch (err) {
+          return cors(web, bad((err as Error).message, 500));
+        }
+      }
       if (!sameOrigin(req)) return bad("Cross-site request refused.", 403);
       if (!authed(req)) return bad("Log in first.", 401);
       try {
@@ -101,12 +146,17 @@ export function createServer(opts: ServeOptions) {
         return bad((err as Error).message, 500);
       }
     };
+  // Object routes only answer the methods they list, so give every one a preflight answer.
+  const withPreflight = <T extends Record<string, unknown>>(routes: T): T => {
+    for (const v of Object.values(routes)) if (v && typeof v === "object" && !("OPTIONS" in v)) (v as Record<string, unknown>).OPTIONS = guard(() => new Response(null, { status: 204 }));
+    return routes;
+  };
 
   const server = Bun.serve<{ off?: () => void }>({
     hostname: opts.host,
     port: opts.port,
     idleTimeout: 120,
-    routes: {
+    routes: withPreflight({
       "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
       "/app.js": () => new Response(appJs, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
       "/style.css": () => new Response(styleCss, { headers: { "content-type": "text/css; charset=utf-8" } }),
@@ -325,12 +375,13 @@ export function createServer(opts: ServeOptions) {
           headers: { "content-type": PREVIEW_TYPES[extname(p).toLowerCase()] ?? "application/octet-stream", "content-security-policy": "sandbox allow-scripts; default-src 'self' data: 'unsafe-inline'" },
         });
       }),
-    },
+    }),
     fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
-        if (!sameOrigin(req)) return bad("Cross-site request refused.", 403);
-        if (!authed(req)) return bad("Log in first.", 401);
+        const web = webOrigin(req);
+        if (web ? !webAuthed(req) : !sameOrigin(req)) return bad(web ? "Wrong or missing token." : "Cross-site request refused.", web ? 401 : 403);
+        if (!web && !authed(req)) return bad("Log in first.", 401);
         if (srv.upgrade(req, { data: {} })) return undefined;
         return bad("WebSocket upgrade failed");
       }
@@ -364,7 +415,7 @@ export function createServer(opts: ServeOptions) {
 }
 
 export async function serveCommand(argv: string[]) {
-  const { values } = parseArgs({ args: argv, options: { host: { type: "string" }, port: { type: "string" }, cwd: { type: "string" }, "no-scheduler": { type: "boolean" } } });
+  const { values } = parseArgs({ args: argv, options: { host: { type: "string" }, port: { type: "string" }, cwd: { type: "string" }, "no-scheduler": { type: "boolean" }, "allow-web": { type: "boolean" } } });
   const cfg = loadConfig();
   const host = values.host ?? cfg.server.host;
   const port = Number(values.port ?? process.env.PORT ?? cfg.server.port);
@@ -376,7 +427,19 @@ export async function serveCommand(argv: string[]) {
     saveConfig(cfg);
     console.log(`Created a login token (saved in ${ensureDirs().config}):\n  ${token}\n`);
   }
-  const server = createServer({ host, port, token: LOOPBACK.has(host) ? process.env.LVW_TOKEN : token, cwd: values.cwd ?? process.cwd() });
+  // Connect mode: the web UI (server.allowOrigins) may use this harness with its own token.
+  let webToken = process.env.LVW_WEB_TOKEN ?? cfg.server.webToken;
+  if (values["allow-web"] && !webToken) {
+    webToken = randomBytes(24).toString("base64url");
+    cfg.server.webToken = webToken;
+    saveConfig(cfg);
+  }
+  const server = createServer({ host, port, token: LOOPBACK.has(host) ? process.env.LVW_TOKEN : token, cwd: values.cwd ?? process.cwd(), webToken: values["allow-web"] ? webToken : undefined, allowOrigins: cfg.server.allowOrigins });
+  if (values["allow-web"] && webToken) {
+    const local = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${server.port}`;
+    console.log(`Web connections allowed from: ${cfg.server.allowOrigins.join(", ")}`);
+    console.log(`Connect the web UI with this link (the token stays in your browser):\n  https://gitguy268.github.io/LvW-harness/webui/#connect=${encodeURIComponent(local)}&token=${webToken}\n`);
+  }
   if (!values["no-scheduler"]) hub.startScheduler();
   console.log(`LvW web UI on http://${host === "0.0.0.0" ? "localhost" : host}:${server.port}  ${LOOPBACK.has(host) ? "(this machine only)" : "(login required)"}`);
 }

@@ -49,13 +49,19 @@ const f = (path: string, size = 10) => ({ path, url: `https://x/${path}`, size }
 
 describe("selectFiles", () => {
   const repo = [f("README.md"), f(".gitattributes"), f("m-Q8_0.gguf", 80), f("m-Q4_K_M.gguf", 40), f("m-Q2_K.gguf", 20), f("mmproj-F16.gguf", 5)];
-  test("defaults to Q4_K_M", () => {
+  test("defaults to Q4_K_M, with the vision projector", () => {
     const s = selectFiles(repo, {});
-    expect(s.files.map((x) => x.path)).toEqual(["m-Q4_K_M.gguf"]);
+    expect(s.files.map((x) => x.path)).toEqual(["m-Q4_K_M.gguf", "mmproj-F16.gguf"]);
     expect(s.note).toContain("Q4_K_M");
   });
   test("pattern picks a quant", () => {
-    expect(selectFiles(repo, { pattern: "Q8_0" }).files.map((x) => x.path)).toEqual(["m-Q8_0.gguf"]);
+    expect(selectFiles(repo, { pattern: "Q8_0" }).files.map((x) => x.path)).toEqual(["m-Q8_0.gguf", "mmproj-F16.gguf"]);
+  });
+  test("projector: F16 first, none for text-only repos, only it when asked for", () => {
+    const two = [f("m-Q4_K_M.gguf"), f("mmproj-Q8_0.gguf", 3), f("mmproj-model-f16.gguf", 6)];
+    expect(selectFiles(two, {}).files.map((x) => x.path)).toEqual(["m-Q4_K_M.gguf", "mmproj-model-f16.gguf"]);
+    expect(selectFiles([f("m-Q4_K_M.gguf")], {}).files).toHaveLength(1);
+    expect(selectFiles(two, { pattern: "mmproj-Q8_0*" }).files.map((x) => x.path)).toEqual(["mmproj-Q8_0.gguf"]);
   });
   test("unknown quant lists the options", () => {
     expect(() => selectFiles(repo, { pattern: "Q3_K_L" })).toThrow(/Q8_0, Q4_K_M, Q2_K/);

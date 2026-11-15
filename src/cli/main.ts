@@ -18,7 +18,7 @@ ${c.bold("Agent")}
   lvw chat [--model m] [--auto|--readonly] [--sandbox docker]   terminal chat
   lvw run "<task>" [--yes] [--json]                     one task, no questions
   lvw research "<question>"                             deep research report
-  lvw serve [--host h] [--port p]                       web UI and API (default 127.0.0.1:7878)
+  lvw serve [--host h] [--port p] [--allow-web]         web UI and API (default 127.0.0.1:7878); --allow-web lets the online web UI connect with a token
   lvw telegram                                          talk to LvW from Telegram
   lvw improve "<task>" [--name p]                       experimental: tune a prompt profile (--profile p)
 

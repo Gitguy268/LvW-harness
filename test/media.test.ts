@@ -67,9 +67,9 @@ describe("media catalog", () => {
     for (const e of catalog()) {
       expect(e.kinds.length).toBeGreaterThan(0);
       for (const k of e.kinds) expect(MEDIA_KINDS).toContain(k);
-      expect(["sdcpp", "ollama", "triposr", "acestep"]).toContain(e.engine);
+      expect(["sdcpp", "ollama", "triposr", "acestep", "whispercpp", "audiocpp", "idol"]).toContain(e.engine);
       expect(e.licence.length).toBeGreaterThan(0);
-      if (e.engine === "sdcpp") expect(Object.keys(e.components ?? {}).length).toBeGreaterThan(0);
+      if (["sdcpp", "whispercpp", "audiocpp", "idol"].includes(e.engine)) expect(Object.keys(e.components ?? {}).length).toBeGreaterThan(0);
       if (e.engine === "ollama") expect(e.ollama).toBeTruthy();
       for (const spec of Object.values(e.components ?? {})) expect(parseComponent(spec).repo).toMatch(/^[^/]+\/[^/]+$/);
       if (e.default) for (const k of e.kinds) seen.set(k, (seen.get(k) ?? 0) + 1);

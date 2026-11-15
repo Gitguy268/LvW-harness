@@ -89,7 +89,10 @@ export interface ServerState {
   startedAt: number;
 }
 
-const stateFile = () => join(ensureDirs().runtime, "llama-server.json");
+/** "main" runs the chat model; "vision" runs config.visionModel beside it on llama.visionPort. */
+export type Slot = "main" | "vision";
+const stateFile = (slot: Slot = "main") => join(ensureDirs().runtime, slot === "main" ? "llama-server.json" : "llama-server-vision.json");
+const slotPort = (slot: Slot) => (slot === "main" ? loadConfig().llama.port : loadConfig().llama.visionPort);
 
 function alive(pid: number) {
   try {
@@ -100,8 +103,8 @@ function alive(pid: number) {
   }
 }
 
-export function serverState(): ServerState | undefined {
-  const f = stateFile();
+export function serverState(slot: Slot = "main"): ServerState | undefined {
+  const f = stateFile(slot);
   if (!existsSync(f)) return undefined;
   const s = JSON.parse(readFileSync(f, "utf8")) as ServerState;
   if (alive(s.pid)) return s;
@@ -117,45 +120,47 @@ export async function serverHealthy(port = loadConfig().llama.port) {
   }
 }
 
-export async function stopServer() {
-  const s = serverState();
+export async function stopServer(slot: Slot = "main") {
+  const s = serverState(slot);
   if (!s) return false;
   process.kill(s.pid, "SIGTERM");
   for (let i = 0; i < 50 && alive(s.pid); i++) await Bun.sleep(100);
   if (alive(s.pid)) process.kill(s.pid, "SIGKILL");
-  rmSync(stateFile(), { force: true });
+  rmSync(stateFile(slot), { force: true });
   return true;
 }
 
 /** Start llama-server for a registry model in the background. Reuses a server already running that model. */
-export async function startServer(ref: string | ModelRecord, opts: { ctx?: number; onStatus?: (s: string) => void } = {}): Promise<ServerState> {
+export async function startServer(ref: string | ModelRecord, opts: { ctx?: number; slot?: Slot; onStatus?: (s: string) => void } = {}): Promise<ServerState> {
+  const slot = opts.slot ?? "main";
   const m = typeof ref === "string" ? findModel(ref) : ref;
   if (!m) throw new Error(`No model "${ref}". See \`lvw model ls\`.`);
   if (!m.mainFile) throw new Error(`${m.name} is ${m.format}, which llama.cpp can't run. Pull a GGUF build of it.`);
   const cfg = loadConfig();
   const ctx = opts.ctx ?? cfg.llama.ctx;
-  const running = serverState();
+  const running = serverState(slot);
   if (running?.modelId === m.id && running.ctx === ctx && (await serverHealthy(running.port))) return running;
-  if (running) await stopServer();
+  if (running) await stopServer(slot);
+  const port = slotPort(slot);
 
   const bin = findLlamaServer();
   if (!bin) throw new Error("llama-server isn't installed. Run `lvw runtime install`.");
-  const args = ["-m", modelPath(m), "--host", "127.0.0.1", "--port", String(cfg.llama.port), "-c", String(ctx), "--jinja", "--alias", m.name];
+  const args = ["-m", modelPath(m), "--host", "127.0.0.1", "--port", String(port), "-c", String(ctx), "--jinja", "--alias", m.name];
   const projector = m.files.find(isProjector);
   if (projector) args.push("--mmproj", modelPath(m, projector));
   args.push(...cfg.llama.args);
 
-  const log = join(ensureDirs().logs, "llama-server.log");
+  const log = join(ensureDirs().logs, slot === "main" ? "llama-server.log" : "llama-server-vision.log");
   const fd = openSync(log, "w");
   const child = spawn(bin, args, { detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
-  const state: ServerState = { pid: child.pid!, port: cfg.llama.port, modelId: m.id, modelName: m.name, ctx, startedAt: Date.now() };
-  writeFileSync(stateFile(), JSON.stringify(state));
+  const state: ServerState = { pid: child.pid!, port, modelId: m.id, modelName: m.name, ctx, startedAt: Date.now() };
+  writeFileSync(stateFile(slot), JSON.stringify(state));
   opts.onStatus?.(`Loading ${m.name}…`);
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     if (!alive(state.pid)) {
-      rmSync(stateFile(), { force: true });
+      rmSync(stateFile(slot), { force: true });
       const tail = readFileSync(log, "utf8").split("\n").slice(-15).join("\n");
       throw new Error(`llama-server exited while loading ${m.name}. Last log lines:\n${tail}`);
     }
@@ -165,7 +170,7 @@ export async function startServer(ref: string | ModelRecord, opts: { ctx?: numbe
     }
     await Bun.sleep(300);
   }
-  await stopServer();
+  await stopServer(slot);
   throw new Error(`llama-server didn't become ready within 3 minutes. See ${log}.`);
 }
 
