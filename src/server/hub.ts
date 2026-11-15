@@ -1,6 +1,6 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { randomUUID } from "node:crypto";
-import type { PermissionMode } from "../config.ts";
+import type { AgentMode, PermissionMode } from "../config.ts";
 import type { Answer, ApprovalRequest } from "../core/permissions.ts";
 import { Session, type Attachment } from "../core/session.ts";
 import { pull } from "../models/manager.ts";
@@ -91,9 +91,10 @@ class Hub {
     return true;
   }
 
-  async session(opts: { sessionId?: string; model?: string; cwd?: string; permissions?: PermissionMode; mode?: "default" | "research"; taskId?: number }) {
+  async session(opts: { sessionId?: string; model?: string; cwd?: string; permissions?: PermissionMode; mode?: "default" | "research"; agentMode?: AgentMode; taskId?: number }) {
     const existing = opts.sessionId ? this.sessions.get(opts.sessionId) : undefined;
-    if (existing && (!opts.model || existing.ctx.model.model.id === opts.model || opts.model === existing.ctx.config.model)) return existing;
+    const sameMode = !existing || !opts.agentMode || existing.agentMode === opts.agentMode;
+    if (existing && sameMode && (!opts.model || existing.ctx.model.model.id === opts.model || opts.model === existing.ctx.config.model)) return existing;
     if (existing) {
       await existing.dispose();
       this.sessions.delete(existing.id);
@@ -104,6 +105,7 @@ class Hub {
       model: opts.model,
       permissions: opts.permissions,
       mode: opts.mode,
+      agentMode: opts.agentMode,
       taskId: opts.taskId,
       sessionId,
       ask: this.ask(sessionId),

@@ -3,6 +3,7 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Container, Editor, Loader, Markdown, matchesKey, ProcessTerminal, Text, TuiMainScreen, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { createInterface } from "node:readline/promises";
 import type { Answer, ApprovalRequest } from "../core/permissions.ts";
+import { isMode, MODE_IDS, MODES } from "../core/modes.ts";
 import { listSessions, Session, shutdownTools } from "../core/session.ts";
 import { parseAgentArgs } from "./agent-args.ts";
 import { toolText } from "./run.ts";
@@ -26,6 +27,9 @@ const mdTheme: MarkdownTheme = {
 };
 
 const HELP = `/new  start over   /exit  quit   Esc  stop the agent   Ctrl+C twice  quit
+/mode [code|plan|ask|debug|architect|research]  switch mode (keeps the chat)   /architect  same as /mode architect
+/undo  roll back the last turn's changes   /checkpoints  list snapshots   /restore <id>  go back to one
+/test  run the project's test and lint checks now
 Approvals: y = yes, n = no, a = always allow this tool for this chat`;
 
 export async function chatCommand(argv: string[]) {
@@ -57,10 +61,12 @@ export async function chatCommand(argv: string[]) {
   log.addChild(new Text(c.dim("Starting…"), 1, 0));
   tui.start();
   let session: Session;
+  let agentMode = a.agentMode;
   const make = (sessionId?: string) =>
     Session.create({
       cwd: a.cwd,
       model: a.model,
+      agentMode,
       permissions: a.permissions,
       sandbox: a.sandbox,
       ask,
@@ -78,7 +84,8 @@ export async function chatCommand(argv: string[]) {
     throw err;
   }
   log.clear();
-  log.addChild(new Text(`${c.bold("LvW")} ${c.dim(`· ${session.ctx.model.label} · ${a.permissions ?? session.ctx.config.permissions} mode · ${session.ctx.exec.id} · /help`)}`, 1, 1));
+  const header = () => `${c.bold("LvW")} ${c.dim(`· ${MODES[session.agentMode].label} · ${session.ctx.model.label} · ${a.permissions ?? session.ctx.config.permissions} approvals · ${session.ctx.exec.id} · /help`)}`;
+  log.addChild(new Text(header(), 1, 1));
   if (resumeId) log.addChild(new Text(c.dim(`resumed session ${resumeId} (${session.agent.state.messages.length} messages)`), 1, 0));
 
   const editor = new Editor(tui, {
@@ -165,6 +172,40 @@ export async function chatCommand(argv: string[]) {
       log.addChild(new Text(c.dim(HELP), 1, 0));
       return tui.requestRender();
     }
+    const say = (msg: string) => {
+      log.addChild(new Text(msg, 1, 0));
+      tui.requestRender();
+    };
+    const modeCmd = /^\/(mode|architect)\b\s*(\S*)/.exec(text);
+    if (modeCmd) {
+      const next = modeCmd[1] === "architect" ? "architect" : modeCmd[2];
+      if (!next) return say(c.dim(MODE_IDS.map((m) => `${m === session.agentMode ? c.cyan("●") : " "} ${m.padEnd(10)} ${MODES[m].summary}`).join("\n")));
+      if (!isMode(next)) return say(c.red(`Unknown mode "${next}". Modes: ${MODE_IDS.join(", ")}`));
+      agentMode = next;
+      const keep = session.id;
+      unwire();
+      await session.dispose();
+      session = await make(keep);
+      unwire = wire(session);
+      return say(header());
+    }
+    if (text === "/checkpoints") {
+      const list = (await session.checkpoints?.list(15)) ?? [];
+      return say(list.length ? list.map((cp) => `${c.cyan(cp.id.slice(0, 8))} ${c.dim(new Date(cp.time).toLocaleString())} ${cp.label}`).join("\n") : c.dim("No checkpoints yet. One is taken before the agent's first change in each turn."));
+    }
+    const restore = /^\/(undo|restore)\b\s*(\S*)/.exec(text);
+    if (restore) {
+      if (!session.checkpoints) return say(c.yellow("Checkpoints are off here (read-only mode, a home folder, or no git)."));
+      const list = await session.checkpoints.list(50);
+      const target = restore[1] === "undo" ? list.find((cp) => !cp.label.startsWith("before restoring")) : list.find((cp) => cp.id.startsWith(restore[2]));
+      if (!target) return say(c.yellow(restore[1] === "undo" ? "Nothing to undo yet." : `No checkpoint ${restore[2]}. See /checkpoints.`));
+      const r = await session.checkpoints.restore(target.id);
+      return say(`${c.green("restored")} ${target.id.slice(0, 8)} "${target.label}" · ${r.restored} files back, ${r.removed} removed · undo this with /checkpoints and /restore`);
+    }
+    if (text === "/test" || text === "/lint") {
+      const results = await session.runChecks(true);
+      return say(results.length ? results.map((r) => `${r.ok ? c.green("✓") : c.red("✗")} ${r.name}: ${r.command}`).join("\n") : c.dim("No test or lint command found. Set checks.test / checks.lint with lvw config set."));
+    }
     if (text === "/new") {
       unwire();
       await session.dispose();
@@ -198,7 +239,7 @@ export async function chatCommand(argv: string[]) {
 /** Line-based fallback when stdin/stdout aren't a terminal. */
 async function plainChat(a: ReturnType<typeof parseAgentArgs>, resumeId?: string) {
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-  const session = await Session.create({ cwd: a.cwd, model: a.model, permissions: a.permissions, sandbox: a.sandbox, sessionId: resumeId, extraPrompt: a.extraPrompt });
+  const session = await Session.create({ cwd: a.cwd, model: a.model, agentMode: a.agentMode, permissions: a.permissions, sandbox: a.sandbox, sessionId: resumeId, extraPrompt: a.extraPrompt });
   session.subscribe((ev) => {
     if (ev.type === "message_update" && ev.assistantMessageEvent.type === "text_delta") process.stdout.write(ev.assistantMessageEvent.delta);
     if (ev.type === "message_end" && ev.message.role === "assistant") process.stdout.write("\n");

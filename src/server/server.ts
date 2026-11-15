@@ -4,7 +4,12 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import pkg from "../../package.json" with { type: "json" };
-import { loadConfig, saveConfig, type PermissionMode } from "../config.ts";
+import { loadConfig, saveConfig, type Config, type PermissionMode } from "../config.ts";
+import { gitCheckpoints } from "../core/checkpoints-git.ts";
+import { isMode, MODES } from "../core/modes.ts";
+import { DEFAULT_MODELS } from "../models/defaults.ts";
+import { renderRecipe } from "../core/recipes.ts";
+import { findRecipe, listRecipes, removeRecipe, saveRecipe } from "../core/recipes-fs.ts";
 import { deleteSession, getSessionMessages, listSessions, type Attachment } from "../core/session.ts";
 import { fitFor, freeBytes } from "../models/disk.ts";
 import { searchHf } from "../models/hf.ts";
@@ -356,6 +361,81 @@ export function createServer(opts: ServeOptions) {
       },
       "/api/skills/:name/approve": { POST: guard((req) => json({ path: approveSkill(req.params.name) })) },
       "/api/skills/:name": { DELETE: guard((req) => json(removeSkill(decodeURIComponent(req.params.name), opts.cwd))) },
+      "/api/defaults": guard(async () => {
+        const { mediaStatus } = await import("../media/make.ts");
+        const media = await mediaStatus().catch(() => []);
+        const pulled = (await listAll()).map((m) => (m as { spec?: string }).spec ?? "");
+        const nativeSize: Record<string, number> = { chat: 2.18, vision: 1.48 };
+        return json(
+          DEFAULT_MODELS.map((d) => {
+            const isMedia = d.role !== "chat" && d.role !== "vision";
+            const entry = isMedia ? media.find((e) => e.id === d.native) : undefined;
+            return { ...d, spec: d.native, media: isMedia, sizeGB: entry?.sizeGB ?? nativeSize[d.role], installed: isMedia ? Boolean(entry?.ready) : pulled.some((p) => p.includes(d.repo)) };
+          }),
+        );
+      }),
+      "/api/modes": guard(() => {
+        const cfg = loadConfig();
+        return json({ modes: Object.values(MODES), current: cfg.mode, pinned: cfg.modes });
+      }),
+      "/api/settings": {
+        GET: guard(() => {
+          const cfg = loadConfig();
+          return json({ mode: cfg.mode, modes: cfg.modes, checks: cfg.checks, critic: cfg.critic, visionModel: cfg.visionModel ?? null, model: cfg.model ?? null });
+        }),
+        PUT: guard(async (req) => {
+          const b = await body<{ mode?: string; modes?: Config["modes"]; checks?: Partial<Config["checks"]>; critic?: Partial<Config["critic"]>; visionModel?: string | null }>(req);
+          const cfg = loadConfig();
+          if (b.mode !== undefined) {
+            if (!isMode(b.mode)) return bad(`Unknown mode ${b.mode}`);
+            cfg.mode = b.mode;
+          }
+          if (b.modes) cfg.modes = Object.fromEntries(Object.entries(b.modes).filter(([k]) => isMode(k))) as Config["modes"];
+          if (b.checks) cfg.checks = { ...cfg.checks, ...b.checks, maxRounds: Math.max(1, Math.min(6, Number(b.checks.maxRounds ?? cfg.checks.maxRounds))) };
+          if (b.critic) cfg.critic = { ...cfg.critic, ...b.critic };
+          if (b.visionModel !== undefined) cfg.visionModel = b.visionModel || undefined;
+          saveConfig(cfg);
+          return json({ ok: true });
+        }),
+      },
+      "/api/checkpoints": guard(async (req) => {
+        const store = gitCheckpoints(new URL(req.url).searchParams.get("cwd") || opts.cwd);
+        return json(store ? await store.list(40) : []);
+      }),
+      "/api/checkpoints/diff": guard(async (req) => {
+        const q = new URL(req.url).searchParams;
+        const store = gitCheckpoints(q.get("cwd") || opts.cwd);
+        if (!store) return bad("Checkpoints don't work in this folder.");
+        return json({ diff: await store.diff(q.get("id") ?? "") });
+      }),
+      "/api/checkpoints/restore": {
+        POST: guard(async (req) => {
+          const b = await body<{ cwd?: string; id?: string }>(req);
+          const store = gitCheckpoints(b.cwd || opts.cwd);
+          if (!store || !b.id) return bad("Nothing to restore.");
+          return json(await store.restore(b.id));
+        }),
+      },
+      "/api/recipes": {
+        GET: guard((req) => {
+          const cwd = new URL(req.url).searchParams.get("cwd") || opts.cwd;
+          return json(listRecipes(cwd).map((r) => ({ ...r, text: existsSync(r.path) ? readFileSync(r.path, "utf8") : "" })));
+        }),
+        PUT: guard(async (req) => {
+          const b = await body<{ text?: string; scope?: "project" | "user"; cwd?: string }>(req);
+          return json({ path: saveRecipe(String(b.text ?? ""), b.cwd || opts.cwd, b.scope === "project" ? "project" : "user") });
+        }),
+      },
+      "/api/recipes/:name": {
+        DELETE: guard((req) => json({ path: removeRecipe(decodeURIComponent(req.params.name), new URL(req.url).searchParams.get("cwd") || opts.cwd) })),
+      },
+      "/api/recipes/:name/render": {
+        POST: guard(async (req) => {
+          const b = await body<{ values?: Record<string, string>; cwd?: string }>(req);
+          const r = findRecipe(decodeURIComponent(req.params.name), b.cwd || opts.cwd).recipe!;
+          return json({ prompt: renderRecipe(r, b.values ?? {}), mode: r.mode ?? null, model: r.model ?? null });
+        }),
+      },
       "/api/compare": {
         POST: guard(async (req) => {
           const b = await body<{ prompt?: string; models?: string[] }>(req);
@@ -404,7 +484,7 @@ export function createServer(opts: ServeOptions) {
         }
         if (msg.type === "chat") {
           hub
-            .prompt({ text: String(msg.text ?? ""), attachments: Array.isArray(msg.attachments) ? (msg.attachments as Attachment[]).filter((a) => typeof a?.data === "string" && typeof a?.mime === "string").slice(0, 8) : undefined, sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
+            .prompt({ agentMode: isMode(msg.agentMode) ? msg.agentMode : undefined, text: String(msg.text ?? ""), attachments: Array.isArray(msg.attachments) ? (msg.attachments as Attachment[]).filter((a) => typeof a?.data === "string" && typeof a?.mime === "string").slice(0, 8) : undefined, sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
             .catch((err: Error) => ws.send(JSON.stringify({ type: "error", sessionId: msg.sessionId, error: err.message })));
         } else if (msg.type === "abort") hub.abort(String(msg.sessionId));
         else if (msg.type === "approve") hub.answer(String(msg.id), (msg.answer as "yes" | "no" | "always") ?? "no");

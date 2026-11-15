@@ -6,7 +6,18 @@ import { todoTool } from "../tools/todo.ts";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
-import { loadConfig, type Config, type PermissionMode } from "../config.ts";
+import { loadConfig, type AgentMode, type Config, type PermissionMode } from "../config.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkpointLabel, type CheckpointStore } from "./checkpoints.ts";
+import { gitCheckpoints } from "./checkpoints-git.ts";
+import { detectChecks, failureBrief, summaryLine, type CheckResult } from "./checks.ts";
+import { criticPrompt, parseVerdict, retryBrief } from "./critic.ts";
+import { csvRecords, fillTemplate, toCsv } from "./csv.ts";
+import { isUntrustedTool, UNTRUSTED_RULE, wrapUntrusted } from "./injection.ts";
+import { ARCHITECT_PROMPT, editorBrief, MODES, modeModel, modePermissions } from "./modes.ts";
+import { repoMapBudget } from "./repomap.ts";
+import { repoMapFor } from "./repomap-fs.ts";
 import { getDb } from "../db.ts";
 import { paths } from "../paths.ts";
 import { loadPlugins } from "../plugins/plugins.ts";
@@ -21,7 +32,7 @@ import { taskTools } from "../tools/orchestra.ts";
 import { shellTools } from "../tools/shell.ts";
 import { defineTool, type LvwTool, type ToolContext } from "../tools/tool.ts";
 import { webTools } from "../tools/web.ts";
-import { decide, summarize, type Asker } from "./permissions.ts";
+import { decide, isReadOnlyCommand, summarize, type Asker } from "./permissions.ts";
 import { buildSystemPrompt, type Mode } from "./prompt.ts";
 import { attachVisionModel, audioPayload, resolveChatModel, type ResolvedChatModel } from "./providers.ts";
 
@@ -33,7 +44,10 @@ export interface SessionOptions {
   sandbox?: Config["sandbox"];
   /** How to ask the person for approval. Without it, anything that needs approval is refused. */
   ask?: Asker;
+  /** Prompt flavour; "research" also picks research mode. */
   mode?: Mode;
+  /** Code, Plan, Ask, Debug, Architect or Research (config.mode when left out). */
+  agentMode?: AgentMode;
   sessionId?: string;
   depth?: number;
   taskId?: number;
@@ -95,6 +109,26 @@ export interface Usage {
   cost: number;
 }
 
+/** Wrap outside text (web, browser, MCP) as untrusted data, with a warning when it looks like an injection. */
+function guardUntrusted(tool: LvwTool): LvwTool {
+  if (!isUntrustedTool(tool.name)) return tool;
+  return {
+    ...tool,
+    execute: async (id, params, signal, onUpdate) => {
+      const out = await tool.execute(id, params, signal, onUpdate);
+      const source = String((params as { url?: string; query?: string })?.url ?? (params as { query?: string })?.query ?? tool.name);
+      let flagged = false;
+      const content = out.content.map((b) => {
+        if (b.type !== "text") return b;
+        const w = wrapUntrusted(source, b.text);
+        flagged ||= w.scan.flagged;
+        return { ...b, text: w.text };
+      });
+      return { ...out, content, details: flagged ? { ...(out.details as object | undefined), injectionWarning: true } : out.details };
+    },
+  };
+}
+
 export class Session {
   readonly id: string;
   readonly agent: Agent;
@@ -102,18 +136,28 @@ export class Session {
   readonly tools: LvwTool[];
   readonly usage: Usage = { input: 0, output: 0, turns: 0, cost: 0 };
   stopReason?: string;
+  readonly agentMode: AgentMode;
+  readonly checkpoints?: CheckpointStore;
+  /** The checkpoint taken before this turn's first change. */
+  turnCheckpoint?: string;
+  private changed = false;
+  private turnLabel = "turn";
   private allowed = new Set<string>();
+  private opts!: SessionOptions;
 
-  private constructor(id: string, agent: Agent, ctx: ToolContext, tools: LvwTool[], private warn: Warn) {
+  private constructor(id: string, agent: Agent, ctx: ToolContext, tools: LvwTool[], private warn: Warn, agentMode: AgentMode, checkpoints?: CheckpointStore) {
     this.id = id;
     this.agent = agent;
     this.ctx = ctx;
     this.tools = tools;
+    this.agentMode = agentMode;
+    this.checkpoints = checkpoints;
   }
 
   static async create(opts: SessionOptions): Promise<Session> {
     const config = loadConfig();
-    const resolved = opts.resolved ?? (await resolveChatModel(opts.model, opts.onStatus));
+    const agentMode: AgentMode = opts.agentMode ?? (opts.mode === "research" ? "research" : opts.mode === "subagent" ? "code" : config.mode);
+    const resolved = opts.resolved ?? (await resolveChatModel(opts.model ?? modeModel(agentMode, config.modes, config.model), opts.onStatus));
     const sandbox = opts.sandbox ?? config.sandbox;
     const exec: ExecBackend = sandbox === "docker" ? dockerBackend(opts.cwd, config.sandboxImage, config.sandboxNetwork) : hostBackend(opts.cwd);
     const id = opts.sessionId ?? randomUUID();
@@ -121,7 +165,8 @@ export class Session {
     const ctx: ToolContext = { cwd: opts.cwd, config, exec, sessionId: id, model: resolved, depth, taskId: opts.taskId };
 
     let tools: LvwTool[] = [...fsTools(ctx), ...shellTools(ctx), ...webTools(ctx), ...knowledgeTools(ctx), ...taskTools(ctx)];
-    if (depth === 0) tools.push(subagentTool(ctx, opts), todoTool());
+    if (depth === 0) tools.push(subagentTool(ctx, opts), fanOutTool(ctx, opts), todoTool());
+    tools.push(repoMapTool(ctx));
     // Each problem is reported once per process, not on every new chat.
     const warn: Warn = (msg) => {
       if (warned.has(msg)) return;
@@ -132,13 +177,22 @@ export class Session {
     for (const f of factories) tools.push(...(await f(ctx, warn)));
     if (opts.extraTools) tools.push(...(await opts.extraTools(ctx)));
     if (opts.only) tools = tools.filter((t) => opts.only!.includes(t.name));
-    tools = tools.map((t) => offloadLargeOutput(t, id, resolved.model.contextWindow));
+    tools = tools.map((t) => offloadLargeOutput(guardUntrusted(t), id, resolved.model.contextWindow));
 
     const saved = opts.sessionId ? loadMessages(opts.sessionId) : undefined;
-    const mode = opts.permissions ?? config.permissions;
+    const mode = modePermissions(agentMode, opts.permissions ?? config.permissions);
+    const spec = MODES[agentMode];
+    const budget = depth === 0 && spec.repoMap ? repoMapBudget(resolved.model.contextWindow) : 0;
+    const map = budget ? repoMapFor(opts.cwd, budget) : "";
+    const extra = [
+      spec.prompt,
+      UNTRUSTED_RULE,
+      map && `<repo_map note="files and their main symbols, most-used first; read files before changing them">\n${map}\n</repo_map>`,
+      opts.extraPrompt,
+    ].filter(Boolean).join("\n\n");
     const agent = new Agent({
       initialState: {
-        systemPrompt: buildSystemPrompt({ cwd: opts.cwd, mode: opts.mode, extra: opts.extraPrompt, tools: tools.map((t) => t.name), skillChars: resolved.model.contextWindow <= 16_384 ? 110 : 300 }),
+        systemPrompt: buildSystemPrompt({ cwd: opts.cwd, mode: agentMode === "research" ? "research" : opts.mode === "subagent" ? "subagent" : "default", extra, tools: tools.map((t) => t.name), skillChars: resolved.model.contextWindow <= 16_384 ? 110 : 300 }),
         model: resolved.model,
         tools,
         messages: saved ?? [],
@@ -150,19 +204,25 @@ export class Session {
       identity: { attribution: null },
       toolExecution: "sequential",
     });
-    const session = new Session(id, agent, ctx, tools, warn);
+    const checkpoints = depth === 0 && mode !== "readonly" ? gitCheckpoints(opts.cwd) : undefined;
+    const session = new Session(id, agent, ctx, tools, warn, agentMode, checkpoints);
+    session.opts = { ...opts, permissions: mode };
 
     agent.beforeToolCall = async ({ toolCall, args }) => {
       const tool = tools.find((t) => t.name === toolCall.name);
       if (!tool) return undefined;
       const a = (args ?? {}) as Record<string, unknown>;
       const d = decide(mode, tool.risk, tool.name, a, opts.cwd);
-      if (d.action === "allow" || session.allowed.has(tool.name)) return undefined;
+      const changes = tool.risk === "write" || (tool.risk === "exec" && !isReadOnlyCommand(String(a.command ?? "")));
       if (d.action === "deny") return { block: true, reason: d.reason };
-      if (!opts.ask) return { block: true, reason: "This needs the user's approval and nobody can answer here. Rerun with --yes or --auto, or explain what you would do." };
-      const answer = await opts.ask({ tool: tool.name, summary: summarize(tool.name, a), args: a });
-      if (answer === "always") session.allowed.add(tool.name);
-      return answer === "no" ? { block: true, reason: "The user declined this action. Ask what they want instead, or take another approach." } : undefined;
+      if (d.action !== "allow" && !session.allowed.has(tool.name)) {
+        if (!opts.ask) return { block: true, reason: "This needs the user's approval and nobody can answer here. Rerun with --yes or --auto, or explain what you would do." };
+        const answer = await opts.ask({ tool: tool.name, summary: summarize(tool.name, a), args: a });
+        if (answer === "always") session.allowed.add(tool.name);
+        if (answer === "no") return { block: true, reason: "The user declined this action. Ask what they want instead, or take another approach." };
+      }
+      if (changes) await session.beforeChange();
+      return undefined;
     };
 
     const maxTurns = opts.maxTurns ?? config.budgets.maxTurns;
@@ -194,8 +254,97 @@ export class Session {
    * Send a message. Pictures go to models that see; audio goes to models that hear and is
    * transcribed for the rest, so a voice note always reaches the model as something it reads.
    */
+  /** Snapshot the folder once per turn, before the first change. */
+  async beforeChange() {
+    this.changed = true;
+    if (this.turnCheckpoint || !this.checkpoints) return;
+    const cp = await this.checkpoints.snapshot(this.turnLabel);
+    this.turnCheckpoint = cp?.id;
+  }
+
   async prompt(text: string, attachments: Attachment[] = []) {
     this.stopReason = undefined;
+    this.changed = false;
+    this.turnCheckpoint = undefined;
+    this.turnLabel = checkpointLabel(text);
+    if (this.agentMode === "architect" && this.ctx.depth === 0 && text.trim()) text = await this.architect(text);
+    const answer = await this.promptOnce(text, attachments);
+    if (this.ctx.depth > 0 || this.stopReason) return answer;
+    await this.runChecks();
+    if (this.ctx.config.critic.enabled && !this.stopReason) await this.critique(text);
+    return lastAssistantText(this.agent.state.messages);
+  }
+
+  /** Aider-style architect: a planner (read-only, its own model) writes the plan this session carries out. */
+  private async architect(task: string): Promise<string> {
+    const plannerRef = this.ctx.config.modes.architect?.model;
+    this.warn(`Architect: planning${plannerRef ? ` with ${plannerRef}` : ""}…`);
+    const planner = await Session.create({
+      cwd: this.ctx.cwd,
+      model: plannerRef,
+      resolved: plannerRef ? undefined : this.ctx.model,
+      agentMode: "plan",
+      mode: "subagent",
+      extraPrompt: ARCHITECT_PROMPT,
+      depth: this.ctx.depth + 1,
+      maxTurns: 25,
+      persist: false,
+    });
+    try {
+      const plan = await planner.prompt(task);
+      return plan.trim() ? editorBrief(task, plan) : task;
+    } finally {
+      await planner.dispose();
+    }
+  }
+
+  /** Run the test and lint commands after a turn that changed files; failures go back to the agent. */
+  async runChecks(force = false): Promise<CheckResult[]> {
+    const cfg = this.ctx.config.checks;
+    if (!force && (!this.changed || !cfg.auto || this.opts.permissions === "readonly")) return [];
+    const cmds = await detectChecks({ read: async (n) => (existsSync(join(this.ctx.cwd, n)) ? readFileSync(join(this.ctx.cwd, n), "utf8") : undefined) }, { test: cfg.test, lint: cfg.lint });
+    const list = (["lint", "test"] as const).filter((k) => cmds[k]).map((k) => ({ name: k, command: cmds[k]! }));
+    if (!list.length) return [];
+    let results: CheckResult[] = [];
+    for (let round = 1; round <= Math.max(1, cfg.maxRounds); round++) {
+      results = [];
+      for (const c of list) {
+        if (!(await this.approveCheck(c.command))) return results;
+        this.warn(`Checking: $ ${c.command}`);
+        const r = await this.ctx.exec.exec(c.command, { timeoutMs: 10 * 60_000 });
+        results.push({ ...c, ok: r.code === 0 && !r.timedOut, output: [r.stdout, r.stderr].filter(Boolean).join("\n") });
+      }
+      this.warn(`Checks: ${summaryLine(results)}`);
+      if (results.every((r) => r.ok) || round === cfg.maxRounds || this.stopReason) break;
+      await this.promptOnce(failureBrief(results, round, cfg.maxRounds));
+    }
+    return results;
+  }
+
+  private async approveCheck(command: string) {
+    const d = decide(this.opts.permissions ?? "ask", "exec", "bash", { command }, this.ctx.cwd);
+    if (d.action === "allow" || this.allowed.has("bash") || this.allowed.has("checks")) return true;
+    if (d.action === "deny" || !this.opts.ask) return false;
+    const answer = await this.opts.ask({ tool: "checks", summary: `$ ${command}  (test/lint check)`, args: { command } });
+    if (answer === "always") this.allowed.add("checks");
+    return answer !== "no";
+  }
+
+  /** OpenHands-style critic: a second look at the result; one more round when it fails. */
+  private async critique(task: string) {
+    const ref = this.ctx.config.critic.model;
+    const critic = ref ? await resolveChatModel(ref) : this.ctx.model;
+    const diff = this.turnCheckpoint && this.checkpoints ? await this.checkpoints.diff(this.turnCheckpoint).catch(() => "") : "";
+    const answer = lastAssistantText(this.agent.state.messages);
+    this.warn("Critic: reviewing…");
+    const reply = await critic.models.completeSimple(critic.model, { systemPrompt: "You are a careful code reviewer.", messages: [{ role: "user", content: criticPrompt(task, answer, diff), timestamp: Date.now() }] });
+    const text = (reply.content ?? []).filter((b: { type: string }) => b.type === "text").map((b: { type: string; text?: string }) => b.text ?? "").join("");
+    const v = parseVerdict(text);
+    this.warn(`Critic: ${v.pass ? "PASS" : "FAIL"}${v.notes ? ` ${v.notes.split("\n")[0].slice(0, 120)}` : ""}`);
+    if (!v.pass) await this.promptOnce(retryBrief(v));
+  }
+
+  private async promptOnce(text: string, attachments: Attachment[] = []) {
     const senses = this.ctx.model.senses ?? { sees: false, hears: false };
     const blocks: { type: "image"; data: string; mimeType: string }[] = [];
     const notes: string[] = [];
@@ -350,4 +499,62 @@ export function getSessionMessages(id: string) {
 
 export function deleteSession(id: string) {
   getDb().query("DELETE FROM sessions WHERE id = ?").run(id);
+}
+
+/** The repository map on demand (the prompt only carries it when the context window allows). */
+function repoMapTool(ctx: ToolContext): LvwTool {
+  return defineTool({
+    name: "repo_map",
+    label: "Repo map",
+    description: "A condensed map of the working folder: source files and their main symbols, most-used first. Use it to find where things live before reading files.",
+    risk: "read",
+    parameters: Type.Object({ max_chars: Type.Optional(Type.Number({ description: "Default 8000" })) }),
+    async execute({ max_chars }) {
+      return repoMapFor(ctx.cwd, Math.min(40_000, Math.max(1000, max_chars ?? 8000))) || "No source files found here.";
+    },
+  });
+}
+
+/** Codex-style CSV fan-out: one helper agent per row, a few at a time; results come back as CSV. */
+function fanOutTool(parent: ToolContext, opts: SessionOptions): LvwTool {
+  return defineTool({
+    name: "fan_out",
+    label: "Fan out",
+    description:
+      "Run the same subtask for every row of a CSV with parallel helper agents. prompt_template uses {{column}} placeholders. Returns the CSV with a result column added. Use for batches of similar, independent work (one file, URL or item per row).",
+    risk: "read",
+    parameters: Type.Object({
+      csv: Type.String({ description: "CSV text with a header row, or a path to a .csv file in the working folder" }),
+      prompt_template: Type.String({ description: "The task for each row, e.g. 'Summarise {{url}} in one line'" }),
+      concurrency: Type.Optional(Type.Number({ description: "Helpers at once, 1-6, default 3" })),
+      result_column: Type.Optional(Type.String({ description: "Default 'result'" })),
+      tools: Type.Optional(Type.Array(Type.String(), { description: "Limit the helpers to these tool names" })),
+    }),
+    async execute({ csv, prompt_template, concurrency, result_column, tools }, signal) {
+      const p = join(parent.cwd, csv.trim());
+      const text = !csv.includes("\n") && csv.trim().endsWith(".csv") && existsSync(p) ? readFileSync(p, "utf8") : csv;
+      const { header, records } = csvRecords(text);
+      if (!records.length) throw new Error("The CSV has a header but no rows.");
+      if (records.length > 200) throw new Error(`${records.length} rows is too many for one fan-out (200 at most). Split it.`);
+      const col = result_column ?? "result";
+      const limit = Math.max(1, Math.min(6, Math.round(concurrency ?? 3)));
+      let next = 0;
+      const worker = async () => {
+        while (next < records.length && !signal?.aborted) {
+          const row = records[next++];
+          const child = await Session.create({ cwd: parent.cwd, resolved: parent.model, permissions: opts.permissions, ask: opts.ask, mode: "subagent", depth: parent.depth + 1, taskId: parent.taskId, only: tools, maxTurns: 15, persist: false });
+          signal?.addEventListener("abort", () => child.abort());
+          try {
+            row[col] = (await child.prompt(fillTemplate(prompt_template, row))).trim() || "(no answer)";
+          } catch (err) {
+            row[col] = `[error] ${(err as Error).message}`;
+          } finally {
+            await child.dispose();
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(limit, records.length) }, worker));
+      return toCsv(header.includes(col) ? header : [...header, col], records);
+    },
+  });
 }

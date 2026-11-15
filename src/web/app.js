@@ -66,43 +66,101 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 3500);
 }
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { "content-type": "application/json", ...(opts.headers ?? {}) }, body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body });
-  if (res.status === 401) {
-    showLogin();
-    throw new Error("Log in first.");
+// ---- backend ----------------------------------------------------------------
+//
+// The same UI runs in three places:
+//   - served by `lvw serve`: HTTP and a WebSocket to the same origin;
+//   - the static web UI (GitHub Pages) on its own: window.LVW_BACKEND, an in-page harness;
+//   - the static web UI connected to someone's LvW-harness: HTTP to that URL with its web token.
+
+const STATIC = Boolean(window.LVW_BACKEND);
+const REMOTE_KEY = "lvw.remote";
+
+function loadRemote() {
+  // `lvw serve --allow-web` prints a link with #connect=<url>&token=<t>; keep it and clean the address bar.
+  const m = /[#&]connect=([^&]+)&token=([^&]+)/.exec(location.hash);
+  if (m) {
+    const r = { url: decodeURIComponent(m[1]).replace(/\/+$/, ""), token: decodeURIComponent(m[2]) };
+    try {
+      localStorage.setItem(REMOTE_KEY, JSON.stringify(r));
+    } catch {}
+    history.replaceState(null, "", location.pathname + location.search + "#chat");
+    return r;
   }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-  return data;
+  if (!STATIC) return null;
+  try {
+    return JSON.parse(localStorage.getItem(REMOTE_KEY) ?? "null");
+  } catch {
+    return null;
+  }
 }
 
+function httpBackend(base, token) {
+  const auth = token ? { authorization: `Bearer ${token}` } : {};
+  const withToken = (url) => (token ? `${url}${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : url);
+  let ws;
+  return {
+    kind: base ? "remote" : "local",
+    label: base ? `LvW-harness at ${base}` : "this LvW-harness",
+    async request(path, opts = {}) {
+      const res = await fetch(base + path, { ...opts, headers: { "content-type": "application/json", ...auth, ...(opts.headers ?? {}) }, body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body });
+      if (res.status === 401) {
+        if (base) throw new Error("The harness refused the token. Reconnect in Settings.");
+        showLogin();
+        throw new Error("Log in first.");
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      return data;
+    },
+    connect(onMessage, onState) {
+      const url = base ? withToken(`${base.replace(/^http/, "ws")}/ws`) : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+      const open = () => {
+        ws = new WebSocket(url);
+        ws.onopen = () => onState?.(true);
+        ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+        ws.onclose = () => (onState?.(false), setTimeout(open, 1500));
+      };
+      open();
+    },
+    send(m) {
+      if (ws?.readyState === 1) ws.send(JSON.stringify(m));
+      else toast("Not connected yet, try again.");
+    },
+    mediaUrl: (rel) => withToken(`${base}/media/${rel.split("/").map(encodeURIComponent).join("/")}`),
+    previewUrl: (path, cwd) => withToken(`${base}/api/preview?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd)}`),
+  };
+}
+
+const remote = loadRemote();
+const backend = STATIC && !remote ? window.LVW_BACKEND : httpBackend(remote?.url ?? "", remote?.token);
+const api = (path, opts) => backend.request(path, opts);
 const fail = (err) => toast(err.message ?? String(err));
 
 // ---- live connection --------------------------------------------------------
 
-const state = { status: null, models: [], jobs: new Map(), sessionId: null, approvals: new Map(), busy: new Set() };
+const state = { status: null, models: [], jobs: new Map(), sessionId: null, approvals: new Map(), busy: new Set(), online: false };
 const listeners = new Set();
-let ws;
 function connect() {
-  ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.type === "job") state.jobs.set(m.job.id, m.job);
-    if (m.type === "approval") state.approvals.set(m.id, m);
-    if (m.type === "approval_done") state.approvals.delete(m.id);
-    if (m.type === "session") m.state === "busy" ? state.busy.add(m.sessionId) : state.busy.delete(m.sessionId);
-    for (const fn of listeners) fn(m);
-  };
-  ws.onclose = () => setTimeout(connect, 1500);
+  backend.connect(
+    (m) => {
+      if (m.type === "job") state.jobs.set(m.job.id, m.job);
+      if (m.type === "approval") state.approvals.set(m.id, m);
+      if (m.type === "approval_done") state.approvals.delete(m.id);
+      if (m.type === "session") m.state === "busy" ? state.busy.add(m.sessionId) : state.busy.delete(m.sessionId);
+      for (const fn of listeners) fn(m);
+    },
+    (up) => (state.online = up),
+  );
 }
-const send = (m) => ws?.readyState === 1 ? ws.send(JSON.stringify(m)) : toast("Not connected yet, try again.");
+const send = (m) => backend.send(m);
 
 async function refreshStatus() {
   try {
     state.status = await api("/api/status");
     const s = state.status;
     $("#status-line").replaceChildren(
+      h("div", {}, backend.kind === "browser" ? "In this browser" : backend.kind === "remote" ? `Connected: ${remote.url.replace(/^https?:\/\//, "")}` : ""),
       h("div", {}, s.running ? `▶ ${s.running.modelName}` : "No model loaded"),
       h("div", {}, `default: ${s.model ?? "none"}`),
       h("div", {}, `${bytes(s.free)} free`),
@@ -129,7 +187,7 @@ function showLogin() {
 
 // ---- pages -----------------------------------------------------------------
 
-const pages = { chat: chatPage, create: createPage, models: modelsPage, tasks: tasksPage, memory: memoryPage, skills: skillsPage, compare: comparePage };
+const pages = { chat: chatPage, create: createPage, models: modelsPage, recipes: recipesPage, tasks: tasksPage, memory: memoryPage, skills: skillsPage, compare: comparePage, settings: settingsPage };
 let cleanup = () => {};
 
 function route() {
@@ -161,7 +219,7 @@ let viewerLoading;
 /** Load the vendored model-viewer only when a 3D result is on screen. */
 function loadViewer() {
   return (viewerLoading ??= new Promise((resolve, reject) => {
-    const s = h("script", { src: "/vendor/model-viewer.min.js" });
+    const s = h("script", { src: "vendor/model-viewer.min.js" });
     s.onload = resolve;
     s.onerror = () => reject(new Error("Couldn't load the 3D viewer."));
     document.head.append(s);
@@ -170,7 +228,7 @@ function loadViewer() {
 
 /** An inline player or viewer for a file under /media. */
 function mediaEl(m) {
-  const src = `/media/${m.rel.split("/").map(encodeURIComponent).join("/")}`;
+  const src = m.url ?? backend.mediaUrl(m.rel);
   const mime = m.mime ?? "";
   let el;
   if (mime.startsWith("image/")) el = h("img", { src, alt: m.prompt ?? m.kind ?? "image", loading: "lazy" });
@@ -245,7 +303,7 @@ async function speakText(text, btn) {
   try {
     const job = await api("/api/media/make", { method: "POST", body: { kind: "speech", prompt: text.slice(0, 4000) } });
     const done = await waitMedia(job.id);
-    new Audio(`/media/${done.output.rel}`).play();
+    new Audio(done.output.url ?? backend.mediaUrl(done.output.rel)).play();
   } catch (e) {
     fail(e);
   } finally {
@@ -268,7 +326,7 @@ function waitMedia(id) {
 // Chat ------------------------------------------------------------------------
 
 async function chatPage(root) {
-  const [sessions, models] = await Promise.all([api("/api/sessions"), api("/api/models")]);
+  const [sessions, models, modeInfo] = await Promise.all([api("/api/sessions"), api("/api/models"), api("/api/modes").catch(() => ({ modes: [], current: "code" }))]);
   await refreshStatus();
   const sessionId = location.hash.split("/")[1] || null;
   state.sessionId = sessionId;
@@ -278,7 +336,43 @@ async function chatPage(root) {
   const runnable = models.filter((m) => m.runnable);
   const modelSel = h("select", { "aria-label": "Model" }, h("option", { value: "" }, `default (${state.status?.model ?? "none"})`), runnable.map((m) => h("option", { value: m.name }, m.name)));
   const permSel = h("select", { "aria-label": "Permissions" }, ["ask", "auto", "readonly"].map((p) => h("option", { value: p, selected: p === (state.status?.permissions ?? "ask") }, p)));
-  const research = h("input", { type: "checkbox", id: "research" });
+  const savedMode = (() => {
+    try {
+      return localStorage.getItem("lvw.mode");
+    } catch {
+      return null;
+    }
+  })();
+  const modeSel = h(
+    "select",
+    { "aria-label": "Mode", title: "Mode", onchange: () => { try { localStorage.setItem("lvw.mode", modeSel.value); } catch {} } },
+    modeInfo.modes.map((m) => h("option", { value: m.id, title: m.summary, selected: m.id === (savedMode ?? modeInfo.current) }, m.label)),
+  );
+  const statusLine = h("div", { class: "muted status-line", "aria-live": "polite" });
+  const ckptBtn = h("button", { title: "Checkpoints: roll back what the agent changed", "aria-label": "Checkpoints", onclick: () => toggleCheckpoints() }, "↩");
+  const ckptPane = h("div", { class: "card checkpoints", hidden: true });
+  async function toggleCheckpoints(force) {
+    if (!force && !ckptPane.hidden) return void (ckptPane.hidden = true);
+    ckptPane.hidden = false;
+    ckptPane.replaceChildren(h("p", { class: "muted" }, "Loading checkpoints…"));
+    try {
+      const list = await api(`/api/checkpoints?cwd=${encodeURIComponent(cwd.value)}`);
+      const diffBox = h("pre", { class: "diff", hidden: true });
+      ckptPane.replaceChildren(
+        h("div", { class: "row" }, h("strong", { class: "grow" }, "Checkpoints"), h("span", { class: "muted" }, "taken before the agent's first change in each turn"), h("button", { class: "small", onclick: () => (ckptPane.hidden = true) }, "Close")),
+        list.length
+          ? h("table", {}, h("tbody", {}, list.slice(0, 20).map((cp) => h("tr", {}, h("td", { class: "mono muted" }, cp.id.slice(0, 8)), h("td", { class: "muted" }, new Date(cp.time).toLocaleString()), h("td", {}, cp.label), h("td", { style: "text-align:right;white-space:nowrap" },
+              h("button", { class: "small", onclick: async () => { diffBox.hidden = false; diffBox.textContent = (await api(`/api/checkpoints/diff?cwd=${encodeURIComponent(cwd.value)}&id=${cp.id}`).catch((e) => ({ diff: e.message }))).diff || "(no changes since)"; } }, "Changes since"),
+              " ",
+              h("button", { class: "small danger", onclick: () => confirm(`Put the folder back as it was before "${cp.label}"? The current state is saved first, so you can undo this.`) && api("/api/checkpoints/restore", { method: "POST", body: { cwd: cwd.value, id: cp.id } }).then((r) => { toast(`Restored: ${r.restored} files back, ${r.removed} removed`); toggleCheckpoints(true); }, fail) }, "Restore"),
+            )))))
+          : h("p", { class: "muted" }, "No checkpoints for this folder yet."),
+        diffBox,
+      );
+    } catch (e) {
+      ckptPane.replaceChildren(h("p", { class: "muted" }, e.message));
+    }
+  }
   const cwd = h("input", { type: "text", value: state.status?.cwd ?? "", class: "grow mono", "aria-label": "Working folder", title: "Working folder" });
   const sendBtn = h("button", { class: "primary" }, "Send");
   const stopBtn = h("button", { hidden: true }, "Stop");
@@ -331,6 +425,7 @@ async function chatPage(root) {
     const t = toolEls.get(id);
     if (!t) return;
     t.el.classList.add(isError ? "err" : "ok");
+    if (result?.details?.injectionWarning) t.el.querySelector("summary").append(h("span", { class: "pill big", title: "This content looked like it was trying to give the agent instructions. It was passed on as data only." }, "⚠ possible prompt injection"));
     const text = (result?.content ?? []).map((b) => b.text ?? `[${b.type}]`).join("\n");
     t.pre.textContent = `${JSON.stringify(t.args, null, 2)}\n\n${text}`;
     const media = result?.details?.media;
@@ -344,8 +439,8 @@ async function chatPage(root) {
     const v = args?.command ?? args?.path ?? args?.url ?? args?.query ?? args?.name ?? args?.task ?? "";
     return String(v).slice(0, 90);
   };
-  function showPreview(path) {
-    const src = `/api/preview?path=${encodeURIComponent(path)}&cwd=${encodeURIComponent(cwd.value)}`;
+  async function showPreview(path) {
+    const src = await backend.previewUrl(path, cwd.value);
     previewPane.hidden = false;
     chat.classList.add("with-preview");
     previewPane.replaceChildren(h("div", { class: "row" }, h("strong", { class: "grow mono" }, path), h("a", { href: src, target: "_blank", rel: "noopener" }, "Open"), h("button", { class: "small", onclick: () => ((previewPane.hidden = true), chat.classList.remove("with-preview")) }, "Close")), h("iframe", { src, sandbox: "allow-scripts", title: `Preview of ${path}` }));
@@ -405,6 +500,11 @@ async function chatPage(root) {
     if (m.sessionId !== state.sessionId) return;
     if (m.type === "session") {
       setBusy(m.state === "busy");
+      statusLine.textContent = m.state === "busy" && m.label ? m.label : "";
+      if (m.state === "busy" && m.label && /^(Checks|Critic|Architect):/.test(m.label)) {
+        transcript.append(h("div", { class: "msg muted note" }, m.label));
+        scroll();
+      }
       if (m.error) transcript.append(h("div", { class: "msg error" }, m.error));
       if (m.state === "idle" && m.label) transcript.append(h("div", { class: "msg muted" }, `stopped: ${m.label}`));
       if (m.state === "idle") refreshSessions();
@@ -508,7 +608,7 @@ async function chatPage(root) {
     showChips();
     input.value = "";
     setBusy(true);
-    send({ type: "chat", sessionId: state.sessionId, text, attachments, model: modelSel.value, permissions: permSel.value, cwd: cwd.value, mode: research.checked ? "research" : "default" });
+    send({ type: "chat", sessionId: state.sessionId, text, attachments, model: modelSel.value, permissions: permSel.value, cwd: cwd.value, agentMode: modeSel.value, mode: modeSel.value === "research" ? "research" : "default" });
     scroll();
   };
   sendBtn.onclick = submit;
@@ -520,9 +620,20 @@ async function chatPage(root) {
     }
   });
 
+  // A recipe started from the Recipes page arrives as a prefilled message.
+  try {
+    const pending = JSON.parse(sessionStorage.getItem("lvw.pendingPrompt") ?? "null");
+    if (pending) {
+      sessionStorage.removeItem("lvw.pendingPrompt");
+      input.value = pending.prompt;
+      if (pending.mode) modeSel.value = pending.mode;
+      if (pending.model && [...modelSel.options].some((o) => o.value === pending.model)) modelSel.value = pending.model;
+    }
+  } catch {}
+
   chat.append(
     list,
-    h("section", { class: "convo" }, transcript, h("div", { class: "composer" }, chips, input, picker, h("div", { class: "row" }, attachBtn, micBtn, modelSel, permSel, h("label", { class: "row", for: "research" }, research, "research"), cwd, stopBtn, sendBtn))),
+    h("section", { class: "convo" }, transcript, ckptPane, h("div", { class: "composer" }, chips, statusLine, input, picker, h("div", { class: "row" }, attachBtn, micBtn, modeSel, modelSel, permSel, cwd, ckptBtn, stopBtn, sendBtn))),
     previewPane,
   );
   root.replaceChildren(chat);
@@ -543,10 +654,13 @@ async function modelsPage(root) {
   const searchInput = h("input", { type: "text", class: "grow", placeholder: "Search Hugging Face, e.g. qwen3 4b gguf", "aria-label": "Search Hugging Face" });
   const results = h("div");
 
+  const suggested = h("div", { class: "suggested" });
   page.append(
     h("h1", {}, "Models"),
     h("p", { class: "sub" }, "Download, run and remove models from Hugging Face, GitHub, GitLab, any URL or Ollama."),
     disk,
+    h("h2", {}, "Suggested"),
+    suggested,
     h("h2", {}, "Add a model"),
     h("div", { class: "card" }, h("div", { class: "row" }, spec, h("button", { class: "primary", onclick: () => inspect(spec.value) }, "Choose files…")), inspectBox, h("div", { class: "row", style: "margin-top:14px" }, searchInput, h("button", { onclick: () => search() }, "Search")), results),
     jobs,
@@ -692,18 +806,203 @@ async function modelsPage(root) {
     if (confirm(`Delete ${n} unfinished or stray item(s), ${bytes(size)}?`)) act(api("/api/gc", { method: "POST" }), "Cleaned up");
   }
 
+  async function renderSuggested() {
+    const list = await api("/api/defaults").catch(() => []);
+    suggested.replaceChildren(
+      ...list.map((d) =>
+        h(
+          "div",
+          { class: "card pick" },
+          h("div", { class: "row" }, h("span", { class: "pill" }, d.role), h("strong", { class: "grow" }, d.name), d.installed ? h("span", { class: "pill fits" }, "ready") : ""),
+          h("div", { class: "muted mono", style: "font-size:12px" }, d.repo),
+          h("p", { class: "muted" }, d.note),
+          h("div", { class: "row" }, h("span", { class: "muted grow" }, `${d.sizeGB ? `${d.sizeGB} GB · ` : ""}${d.licence}`),
+            d.available === false
+              ? h("span", { class: "muted" }, d.why ?? "needs the desktop harness")
+              : d.installed
+                ? ""
+                : h("button", { class: "small primary", onclick: () => (d.media ? api("/api/media/pull", { method: "POST", body: { id: d.native } }).then(() => toast("Download started; progress is on the Create page"), fail) : pull(d.spec ?? d.native)) }, "Get")),
+        ),
+      ),
+    );
+  }
+
   for (const j of await api("/api/jobs")) state.jobs.set(j.id, j);
   renderJobs();
-  await renderModels();
+  await Promise.all([renderModels(), renderSuggested()]);
   onLive((m) => {
     if (m.type !== "job") return;
     if (m.job.status !== "running") {
       m.job.seen = Date.now();
       renderModels();
+      renderSuggested();
       if (m.job.status === "done") toast(`${m.job.model?.name} is ready`);
     }
     renderJobs();
   });
+}
+
+// Recipes ---------------------------------------------------------------------
+
+const RECIPE_TEMPLATE = `name: my-recipe
+description: What this recipe does, in one line
+mode: code
+parameters:
+  - key: target
+    description: What to work on
+    default: .
+prompt: |
+  Describe the task here. Use {{target}} for parameters.
+`;
+
+async function recipesPage(root) {
+  const page = h("div", { class: "page" });
+  root.replaceChildren(page);
+  const list = h("div");
+  const editor = h("textarea", { rows: 14, class: "mono", "aria-label": "Recipe YAML", spellcheck: "false" });
+  editor.value = RECIPE_TEMPLATE;
+  const scope = h("select", { "aria-label": "Where to save" }, h("option", { value: "user" }, "for me (all folders)"), h("option", { value: "project" }, "for this project"));
+  const importer = h("input", { type: "file", accept: ".yaml,.yml,text/yaml", hidden: true, onchange: async () => { if (importer.files[0]) editor.value = await importer.files[0].text(); importer.value = ""; } });
+  page.append(
+    h("h1", {}, "Recipes"),
+    h("p", { class: "sub" }, "Shareable YAML files with a prompt, its mode, model, skills and parameters. Run one to start a chat with it."),
+    list,
+    h("h2", {}, "Write or import a recipe"),
+    h("div", { class: "card" }, editor, h("div", { class: "row", style: "margin-top:8px" }, scope, h("span", { class: "grow" }), importer, h("button", { onclick: () => importer.click() }, "Import file…"), h("button", { class: "primary", onclick: save }, "Save"))),
+  );
+  async function save() {
+    try {
+      const r = await api("/api/recipes", { method: "PUT", body: { text: editor.value, scope: scope.value } });
+      toast(`Saved ${r.path}`);
+      render();
+    } catch (e) {
+      fail(e);
+    }
+  }
+  async function run(r) {
+    const values = {};
+    for (const p of r.recipe.parameters ?? []) {
+      const v = prompt(`${p.key}${p.description ? ` (${p.description})` : ""}`, p.default ?? "");
+      if (v === null) return;
+      values[p.key] = v;
+    }
+    try {
+      const out = await api(`/api/recipes/${encodeURIComponent(r.name)}/render`, { method: "POST", body: { values } });
+      sessionStorage.setItem("lvw.pendingPrompt", JSON.stringify(out));
+      location.hash = "chat";
+    } catch (e) {
+      fail(e);
+    }
+  }
+  const download = (r) => {
+    const a = h("a", { href: URL.createObjectURL(new Blob([r.text], { type: "text/yaml" })), download: `${r.name}.yaml` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  async function render() {
+    const recipes = await api("/api/recipes");
+    list.replaceChildren(
+      recipes.length
+        ? h("div", { class: "card" }, h("table", {}, h("tbody", {}, recipes.map((r) => h("tr", {},
+            h("td", {}, h("strong", { class: "mono" }, r.name), h("div", { class: "muted" }, r.error ?? r.recipe?.description ?? "")),
+            h("td", { class: "muted" }, r.recipe?.mode ?? ""),
+            h("td", { class: "muted" }, r.scope),
+            h("td", { style: "text-align:right;white-space:nowrap" },
+              r.error ? "" : h("button", { class: "small primary", onclick: () => run(r) }, "Run"), " ",
+              h("button", { class: "small", onclick: () => ((editor.value = r.text), (scope.value = r.scope), editor.focus()) }, "Edit"), " ",
+              h("button", { class: "small", onclick: () => download(r) }, "Download"), " ",
+              h("button", { class: "small danger", onclick: () => confirm(`Delete ${r.name}?`) && api(`/api/recipes/${encodeURIComponent(r.name)}`, { method: "DELETE" }).then(render, fail) }, "Delete")))))))
+        : h("div", { class: "empty" }, "No recipes yet. Write one below, or import a .yaml file someone shared."),
+    );
+  }
+  await render();
+}
+
+// Settings --------------------------------------------------------------------
+
+async function settingsPage(root) {
+  const page = h("div", { class: "page" });
+  root.replaceChildren(page);
+  const [cfg, models, modeInfo] = await Promise.all([api("/api/settings"), api("/api/models").catch(() => []), api("/api/modes").catch(() => ({ modes: [] }))]);
+  const names = models.filter((m) => m.runnable).map((m) => m.name);
+  const datalist = h("datalist", { id: "model-names" }, names.map((n) => h("option", { value: n })));
+  const modelInput = (value, label) => h("input", { type: "text", class: "mono", list: "model-names", value: value ?? "", placeholder: "default model", "aria-label": label });
+
+  const defMode = h("select", { "aria-label": "Default mode" }, modeInfo.modes.map((m) => h("option", { value: m.id, selected: m.id === cfg.mode }, `${m.label}: ${m.summary}`)));
+  const pins = Object.fromEntries(["plan", "ask", "debug", "code", "research"].map((m) => [m, modelInput(cfg.modes?.[m]?.model, `${m} model`)]));
+  const planner = modelInput(cfg.modes?.architect?.model, "Architect planner model");
+  const editorM = modelInput(cfg.modes?.architect?.editor, "Architect editor model");
+  const vision = modelInput(cfg.visionModel, "Vision model");
+  const chkAuto = h("input", { type: "checkbox", checked: cfg.checks?.auto });
+  const chkTest = h("input", { type: "text", class: "mono grow", value: cfg.checks?.test ?? "", placeholder: "found from package.json, go.mod, Cargo.toml, pyproject or Makefile", "aria-label": "Test command" });
+  const chkLint = h("input", { type: "text", class: "mono grow", value: cfg.checks?.lint ?? "", placeholder: "found automatically", "aria-label": "Lint command" });
+  const chkRounds = h("input", { type: "number", min: 1, max: 6, value: cfg.checks?.maxRounds ?? 3, "aria-label": "Rounds", style: "width:5em" });
+  const critOn = h("input", { type: "checkbox", checked: cfg.critic?.enabled });
+  const critModel = modelInput(cfg.critic?.model, "Critic model");
+  const row = (label, ...els) => h("label", { class: "row field-row" }, h("span", { class: "label" }, label), ...els);
+
+  const save = async () => {
+    const modes = {};
+    for (const [m, el] of Object.entries(pins)) if (el.value.trim()) modes[m] = { model: el.value.trim() };
+    if (planner.value.trim() || editorM.value.trim()) modes.architect = { model: planner.value.trim() || undefined, editor: editorM.value.trim() || undefined };
+    try {
+      await api("/api/settings", { method: "PUT", body: { mode: defMode.value, modes, visionModel: vision.value.trim() || null, checks: { auto: chkAuto.checked, test: chkTest.value.trim() || undefined, lint: chkLint.value.trim() || undefined, maxRounds: Number(chkRounds.value) || 3 }, critic: { enabled: critOn.checked, model: critModel.value.trim() || undefined } } });
+      toast("Saved");
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const connectCard = STATIC ? connectionCard() : "";
+  page.append(
+    h("h1", {}, "Settings"),
+    h("p", { class: "sub" }, "How LvW works by default. Each chat can still pick its own mode and model."),
+    connectCard,
+    datalist,
+    h("h2", {}, "Modes"),
+    h("div", { class: "card" },
+      row("Default mode", defMode),
+      h("p", { class: "muted" }, "Pin a model to a mode, so planning can use a stronger model than editing. Empty means the default model."),
+      ...Object.entries(pins).map(([m, el]) => row(`${m[0].toUpperCase()}${m.slice(1)} model`, el)),
+      row("Architect plans with", planner),
+      row("Architect edits with", editorM),
+    ),
+    h("h2", {}, "Pictures"),
+    h("div", { class: "card" }, row("Vision model", vision), h("p", { class: "muted" }, "Answers turns that carry a picture when the chat model can't see. LFM3-VL 2B is the suggested one.")),
+    h("h2", {}, "Test and lint loop"),
+    h("div", { class: "card" }, row("Run after changes", chkAuto), row("Test command", chkTest), row("Lint command", chkLint), row("Fix rounds", chkRounds), h("p", { class: "muted" }, "After a turn that changed files, LvW runs these and hands failures back to the agent. Running them asks first unless approvals are on auto.")),
+    h("h2", {}, "Critic"),
+    h("div", { class: "card" }, row("Review finished work", critOn), row("Critic model", critModel), h("p", { class: "muted" }, "A second model checks the result and the changes; on a FAIL the agent gets one more round with its notes.")),
+    h("div", { class: "row", style: "margin-top:16px" }, h("span", { class: "grow" }), h("button", { class: "primary", onclick: save }, "Save settings")),
+  );
+}
+
+/** The static web UI: run in this browser, or drive your own LvW-harness. */
+function connectionCard() {
+  const url = h("input", { type: "url", class: "mono grow", value: remote?.url ?? "http://127.0.0.1:7878", "aria-label": "Harness address" });
+  const token = h("input", { type: "password", class: "mono grow", value: remote?.token ?? "", placeholder: "web token from lvw serve --allow-web", "aria-label": "Web token", autocomplete: "off" });
+  const test = async () => {
+    try {
+      const res = await fetch(`${url.value.replace(/\/+$/, "")}/api/status`, { headers: { authorization: `Bearer ${token.value.trim()}` } });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+      localStorage.setItem(REMOTE_KEY, JSON.stringify({ url: url.value.replace(/\/+$/, ""), token: token.value.trim() }));
+      location.reload();
+    } catch (e) {
+      toast(`Couldn't connect: ${e.message === "Failed to fetch" ? "nothing answered (is lvw serve --allow-web running? Safari blocks this; use a Chromium browser or Firefox)" : e.message}`);
+    }
+  };
+  return h("div", {},
+    h("h2", {}, "Where LvW runs"),
+    h("div", { class: "card" },
+      h("p", {}, remote ? `Connected to your LvW-harness at ${remote.url}. Chats, files, models and tools are on that machine.` : "Running in this browser: models, files and chats stay on this device. Some things need the desktop harness (a real shell, Yue2 music, Idol 3D, GitHub release downloads)."),
+      h("div", { class: "row" }, url),
+      h("div", { class: "row", style: "margin-top:6px" }, token),
+      h("div", { class: "row", style: "margin-top:8px" },
+        h("span", { class: "muted grow" }, "Start it with: lvw serve --allow-web (it prints a link that fills this in)"),
+        remote ? h("button", { onclick: () => { localStorage.removeItem(REMOTE_KEY); location.reload(); } }, "Use this browser instead") : "",
+        h("button", { class: "primary", onclick: test }, remote ? "Reconnect" : "Connect")),
+    ),
+  );
 }
 
 // Tasks -----------------------------------------------------------------------
