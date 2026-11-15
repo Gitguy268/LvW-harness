@@ -123,6 +123,36 @@ try {
     check(!((await api(page, "/api/models")) as { name: string }[]).some((m) => m.name === smol!.name), "SmolLM2 removed");
   }
 
+  if (which === "upload" || which === "all") {
+    const file = join(tmpdir(), "stories260K.gguf");
+    await Bun.write(file, await (await fetch("https://huggingface.co/ggml-org/models/resolve/main/tinyllamas/stories260K.gguf")).arrayBuffer());
+    await open("models");
+    await page.setInputFiles("input[aria-label='GGUF files from this computer']", file);
+    // Poll from here: waitForFunction would take an async predicate's Promise as "true".
+    for (let i = 0; i < 60 && !((await api(page, "/api/models")) as { name: string }[]).some((m) => m.name === "stories260K"); i++) await page.waitForTimeout(1000);
+    const up = ((await api(page, "/api/models")) as { name: string; runnable: boolean; files: { sha256?: string }[] }[]).find((m) => m.name === "stories260K");
+    if (!up) console.log("jobs:", JSON.stringify(await api(page, "/api/jobs")).slice(0, 600));
+    check(Boolean(up?.runnable && up.files[0].sha256?.length === 64), "a GGUF from this computer was added, with its SHA-256");
+    const ran = await api(page, "/api/models/stories260K/run", { method: "POST" }).then(() => true, (e) => String(e));
+    check(ran === true, `the uploaded GGUF loads and generates (${ran})`);
+    await api(page, "/api/models/stop", { method: "POST" });
+    await api(page, "/api/models/stories260K", { method: "DELETE" });
+    rmSync(file, { force: true });
+  }
+
+    if (which === "sources" || which === "all") {
+    // Small files from each host, through the same resolvers as `lvw model pull`.
+    const gh = await pullAndWait("gh:Gitguy268/LvW-harness@main:LICENSE");
+    check(gh.status === "done", `GitHub repo file downloaded (${gh.error ?? "ok"})`);
+    const gl = await pullAndWait("gl:inkscape/extras/extension-manager:LICENSE.txt");
+    check(gl.status === "done", `GitLab repo file downloaded through /api/v4 (${gl.error ?? "ok"})`);
+    const models = (await api(page, "/api/models")) as { spec: string; size: number; missing: boolean; name: string }[];
+    check(models.filter((m) => /^g[hl]:/.test(m.spec)).every((m) => m.size > 1000 && !m.missing), "both stored with their real size");
+    const rel = await pullAndWait("gh:0xShug0/audio.cpp@v0.9.5:audio-v0.9.5-server-config-examples.zip");
+    check(rel.status === "error" && /doesn't allow web pages|CORS proxy/.test(rel.error ?? ""), `a GitHub release file explains the CORS limit (${(rel.error ?? "").slice(0, 80)})`);
+    for (const m of models) await api(page, `/api/models/${encodeURIComponent(m.name)}`, { method: "DELETE" });
+  }
+
   if (which === "k2" || which === "all") {
     const j = await pullAndWait("hf:Lucasgitguy-co/K2-Horizon-4x0.9B-MoE-heretic-GGUF:K2-Horizon-4x0.9B-MoE-heretic-Q4_K_M.gguf");
     check(j.status === "done", `K2-Horizon Q4_K_M downloaded (${j.error ?? "ok"})`);
@@ -142,6 +172,11 @@ try {
   }
 
   if (which === "vision" || which === "all") {
+    // A small text-only chat model, so the picture has to go to the vision model.
+    const chatJob = await pullAndWait("hf:bartowski/SmolLM2-135M-Instruct-GGUF:Q8_0");
+    check(chatJob.status === "done", "SmolLM2 ready as the chat model");
+    const smolName = ((await api(page, "/api/models")) as { name: string }[]).find((m) => m.name.includes("SmolLM2"))!.name;
+    await api(page, `/api/models/${encodeURIComponent(smolName)}/default`, { method: "POST" });
     const j = await pullAndWait("hf:Lucasgitguy-co/lfm3-vl-2b-heretic-gguf:lfm3-vl-2b-heretic-Q4_K_M.gguf");
     check(j.status === "done", `LFM3-VL downloaded with its projector (${j.error ?? "ok"})`);
     const lfm = ((await api(page, "/api/models")) as { name: string; files: { path: string }[] }[]).find((m) => m.name.includes("lfm3-vl"))!;
@@ -177,7 +212,10 @@ try {
     const home = mkdtempSync(join(tmpdir(), "lvw-connect-"));
     const origin = `http://127.0.0.1:${server.port}`;
     await Bun.write(join(home, "config.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 7979, allowOrigins: [origin] } }));
-    const proc = Bun.spawn(["bun", resolve(import.meta.dir, "../../src/cli/main.ts"), "serve", "--allow-web", "--port", "7979", "--no-scheduler"], { env: { ...process.env, LVW_HOME: home }, stdout: "pipe", stderr: "pipe" });
+    // A picture in the harness's media folder and a page in its working folder, for the media and preview checks.
+    await Bun.write(join(home, "media", "test", "pic.png"), Bun.file(resolve(import.meta.dir, "fixtures/red-circle.png")));
+    await Bun.write(join(home, "work", "page.html"), "<!doctype html><title>preview ok</title><h1 id=x>preview ok</h1>");
+    const proc = Bun.spawn(["bun", resolve(import.meta.dir, "../../src/cli/main.ts"), "serve", "--allow-web", "--port", "7979", "--no-scheduler", "--cwd", join(home, "work")], { env: { ...process.env, LVW_HOME: home }, stdout: "pipe", stderr: "pipe" });
     cleanups.push(() => (proc.kill(), rmSync(home, { recursive: true, force: true })));
     let printed = "";
     const reader = proc.stdout.getReader();
@@ -205,6 +243,22 @@ try {
       ws.onerror = () => res(false);
     }));
     check(live, "live connection to the harness with the token");
+    check(!(await page.evaluate(() => crossOriginIsolated)), "connected: the page is not cross-origin isolated (the service worker is gone)");
+    // The same URLs the UI builds for media results and previews.
+    const media = await page.evaluate(async () => {
+      const remote = JSON.parse(localStorage.getItem("lvw.remote")!);
+      const img = document.createElement("img");
+      img.src = `${remote.url}/media/test/pic.png?token=${encodeURIComponent(remote.token)}`;
+      document.body.append(img);
+      await new Promise((r) => ((img.onload = r), (img.onerror = r)));
+      const frame = document.createElement("iframe");
+      frame.src = `${remote.url}/api/preview?path=page.html&cwd=&token=${encodeURIComponent(remote.token)}`;
+      document.body.append(frame);
+      const loaded = await new Promise<boolean>((r) => ((frame.onload = () => r(true)), setTimeout(() => r(false), 8000)));
+      return { img: img.naturalWidth, frame: loaded };
+    });
+    check(media.img > 0, `a picture from the harness shows in the page (${media.img}px wide)`);
+    check(media.frame, "a preview frame from the harness loads");
     await page.evaluate(() => localStorage.removeItem("lvw.remote"));
   }
 

@@ -31,6 +31,7 @@ const result = await Bun.build({
   splitting: true,
   minify: true,
   sourcemap: "linked",
+  metafile: true,
   define: { __LVW_VERSION__: JSON.stringify(pkg.version), "process.env.NODE_ENV": '"production"' },
   plugins: [
     {
@@ -62,7 +63,22 @@ cpSync(join(root, "src/web/app.js"), join(out, "app.js"));
 cpSync(join(root, "src/web/style.css"), join(out, "style.css"));
 cpSync(join(root, "src/web/vendor"), join(out, "vendor"), { recursive: true });
 let html = readFileSync(join(root, "src/web/index.html"), "utf8");
-const head = `    <script>window.coi = { quiet: true };</script>
+// Cross-origin isolation (for wllama's threads) only when the page runs the harness itself.
+// Connected to a desktop harness, nothing runs here, and isolation would block that harness's
+// pictures, audio and preview frames (they carry no CORP header), so the service worker goes.
+const head = `    <script>
+      (function () {
+        var remote = false;
+        try { remote = !!localStorage.getItem("lvw.remote") || /[#&]connect=/.test(location.hash); } catch (e) {}
+        window.coi = { quiet: true, shouldRegister: function () { return !remote; } };
+        if (remote && navigator.serviceWorker) {
+          navigator.serviceWorker.getRegistrations().then(function (rs) {
+            if (!rs.length) return;
+            Promise.all(rs.map(function (r) { return r.unregister(); })).then(function () { if (window.crossOriginIsolated) location.reload(); });
+          });
+        }
+      })();
+    </script>
     <script src="coi-serviceworker.min.js"></script>
     <link rel="manifest" href="manifest.webmanifest" />
     <meta name="theme-color" content="#256f68" />
@@ -99,25 +115,45 @@ cpSync(join(root, "src/webui/whisper-worker.js"), join(out, "whisper-worker.js")
 // 5. Cross-origin isolation on GitHub Pages (threads need SharedArrayBuffer).
 cpSync(nm("coi-serviceworker/coi-serviceworker.min.js"), join(out, "coi-serviceworker.min.js"));
 
-// 6. Licences of what ships in the page.
-const licences: [string, string][] = [
-  ["wllama (MIT)", nm("@wllama/wllama/LICENCE")],
-  ["just-bash (Apache-2.0)", nm("just-bash/LICENSE")],
-  ["hash-wasm (MIT)", nm("hash-wasm/LICENSE")],
-  ["yaml (ISC)", nm("yaml/LICENSE")],
-  ["coi-serviceworker (MIT)", nm("coi-serviceworker/LICENSE")],
-  ["whisper.cpp (MIT)", join(root, "src/webui/vendor/whisper/LICENSE-whisper.cpp")],
-];
-const notices = [`LvW web UI ${pkg.version}: MIT, Lucas Van De Weerd. Third-party code in this folder:\n`];
-for (const [name, file] of licences) {
-  if (!existsSync(file)) {
-    // just-bash ships its licence in the repo, not the npm package; name it and link it.
-    notices.push(`== ${name}\nSee https://github.com/vercel-labs/just-bash (package.json "license": "Apache-2.0").\n`);
+// 6. Licences of everything that ships in the page: every npm package the bundler pulled in
+//    (from its metafile), just-bash's own dependencies (its browser build has them inlined),
+//    and the files copied above. Copyleft or unknown licences stop the build.
+const COPYLEFT = /\b(A?GPL|LGPL|MPL|EUPL|CDDL|EPL|OSL|SSPL)\b/i;
+const bundled = new Set<string>();
+for (const input of Object.keys((result as unknown as { metafile: { inputs: Record<string, unknown> } }).metafile.inputs)) {
+  const m = /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input);
+  if (m) bundled.add(m[1]);
+}
+const pkgDir = (name: string): string | undefined =>
+  // A copy nested under the package that uses it is the one that was bundled.
+  [nm(`just-bash/node_modules/${name}`), nm(`@earendil-works/pi-ai/node_modules/${name}`), nm(`@earendil-works/pi-agent-core/node_modules/${name}`), nm(name)].find((d) => existsSync(join(d, "package.json")));
+const jb = JSON.parse(readFileSync(nm("just-bash/package.json"), "utf8")) as { dependencies?: Record<string, string> };
+for (const d of Object.keys(jb.dependencies ?? {})) bundled.add(d);
+for (const extra of ["@wllama/wllama", "coi-serviceworker"]) bundled.add(extra);
+const notices = [`LvW web UI ${pkg.version}: MIT, Lucas Van De Weerd.\nThird-party code in this folder, with each licence and notice as published:\n`];
+const problems: string[] = [];
+for (const name of [...bundled].sort()) {
+  const dir = pkgDir(name);
+  if (!dir) {
+    problems.push(`${name}: not found in node_modules`);
     continue;
   }
-  notices.push(`== ${name}\n${readFileSync(file, "utf8").trim()}\n`);
+  const meta = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { version: string; license?: string | { type?: string }; repository?: string | { url?: string } };
+  const licence = typeof meta.license === "string" ? meta.license : meta.license?.type;
+  if (!licence) problems.push(`${name}: no licence field`);
+  else if (COPYLEFT.test(licence)) problems.push(`${name}: ${licence} is copyleft`);
+  const files = (await Array.fromAsync(new Bun.Glob("{LICEN[CS]E,LICEN[CS]E.*,COPYING,COPYING.*,NOTICE,NOTICE.*}").scan({ cwd: dir, onlyFiles: true }))).sort();
+  const repo = typeof meta.repository === "string" ? meta.repository : meta.repository?.url;
+  notices.push(`== ${name} ${meta.version} (${licence ?? "unknown"})${repo ? ` ${repo.replace(/^git\+/, "")}` : ""}`);
+  if (!files.length) notices.push(`(The package ships no licence file; its package.json says ${licence}.)`);
+  for (const f of files) notices.push(readFileSync(join(dir, f), "utf8").trim());
+  notices.push("");
 }
+notices.push(`== whisper.cpp v1.9.5 (MIT), built from source by scripts/build-whisper-wasm.sh\n${readFileSync(join(root, "src/webui/vendor/whisper/LICENSE-whisper.cpp"), "utf8").trim()}\n`);
+notices.push(`== @google/model-viewer 4.4.0 (Apache-2.0, includes three.js and fflate, MIT)\n${readFileSync(join(root, "src/web/vendor/model-viewer.LICENSE"), "utf8").trim()}\n`);
+if (problems.length) fail(`licence check failed:\n  ${problems.join("\n  ")}`);
 writeFileSync(join(out, "THIRD-PARTY-NOTICES.txt"), notices.join("\n"));
+console.log(`  ${bundled.size} bundled packages, licences checked (THIRD-PARTY-NOTICES.txt)`);
 
 const size = (p: string) => (existsSync(p) ? Bun.file(p).size : 0);
 console.log(`web UI built in ${out}`);

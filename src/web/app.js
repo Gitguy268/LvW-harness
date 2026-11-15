@@ -660,6 +660,20 @@ async function modelsPage(root) {
   const results = h("div");
 
   const suggested = h("div", { class: "suggested" });
+  // In the browser, GGUF files from this computer can be added too (pick a model and its mmproj together).
+  const uploadInput = h("input", { type: "file", accept: ".gguf", multiple: true, hidden: true, "aria-label": "GGUF files from this computer", onchange: async () => {
+    const files = [...uploadInput.files];
+    uploadInput.value = "";
+    if (!files.length) return;
+    try {
+      const job = await backend.upload(files);
+      state.jobs.set(job.id, job);
+      renderJobs();
+    } catch (e) {
+      fail(e);
+    }
+  } });
+  const uploadRow = backend.upload ? h("div", { class: "row", style: "margin-top:14px" }, h("span", { class: "muted grow" }, "Or add .gguf files from this computer (a model and its mmproj together)."), uploadInput, h("button", { onclick: () => uploadInput.click() }, "Add GGUF files…")) : "";
   page.append(
     h("h1", {}, "Models"),
     h("p", { class: "sub" }, "Download, run and remove models from Hugging Face, GitHub, GitLab, any URL or Ollama."),
@@ -667,7 +681,7 @@ async function modelsPage(root) {
     h("h2", {}, "Suggested"),
     suggested,
     h("h2", {}, "Add a model"),
-    h("div", { class: "card" }, h("div", { class: "row" }, spec, h("button", { class: "primary", onclick: () => inspect(spec.value) }, "Choose files…")), inspectBox, h("div", { class: "row", style: "margin-top:14px" }, searchInput, h("button", { onclick: () => search() }, "Search")), results),
+    h("div", { class: "card" }, h("div", { class: "row" }, spec, h("button", { class: "primary", onclick: () => inspect(spec.value) }, "Choose files…")), inspectBox, h("div", { class: "row", style: "margin-top:14px" }, searchInput, h("button", { onclick: () => search() }, "Search")), results, uploadRow),
     jobs,
     h("h2", {}, "Downloaded"),
     table,

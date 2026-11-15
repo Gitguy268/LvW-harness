@@ -16,7 +16,7 @@ import { db, getSettings, saveSettings, type BrowserSettings } from "./db.ts";
 import { applyKeys } from "./env.ts";
 import { closeFolder, openFolder, previewBlob, ROOT, useWorkspace, workspace } from "./files.ts";
 import { loadedModels, onModelStatus, resolveChatModel, unload } from "./llm.ts";
-import { disk, findModel, gcApply, gcScan, inspect, listModels, pull, removeModel, type PullJob } from "./models.ts";
+import { disk, findModel, gcApply, gcScan, importFiles, inspect, listModels, pull, removeModel, type PullJob } from "./models.ts";
 import { setCorsProxy } from "./net.ts";
 import { BrowserSession, type Attachment, type SavedSession } from "./session.ts";
 import { allSkills, searchMemory, writeMemory } from "./tools.ts";
@@ -473,6 +473,24 @@ export async function request(path: string, opts: { method?: string; body?: unkn
     return h(params, body, url.searchParams);
   }
   throw new Error(`${method} ${url.pathname} isn't available in the browser version.`);
+}
+
+/** Files from this computer → a model, reported as a download job so the Models page shows progress. */
+export function upload(files: File[]) {
+  const ctrl = new AbortController();
+  const job: PullJob & { ctrl: AbortController } = { id: crypto.randomUUID(), spec: files.map((f) => f.name).join(" + "), status: "running", done: 0, total: files.reduce((n, f) => n + f.size, 0), note: "Copying into the browser's storage…", ctrl };
+  jobs.set(job.id, job);
+  const publish = () => {
+    const { ctrl: _c, ...plain } = job;
+    emit({ type: "job", job: plain });
+  };
+  importFiles(files, (done) => ((job.done = done), publish()))
+    .then((m) => ((job.status = "done"), (job.model = m)))
+    .catch((err: Error) => ((job.status = "error"), (job.error = err.message)))
+    .finally(publish);
+  publish();
+  const { ctrl: _c, ...plain } = job;
+  return plain;
 }
 
 export function connect(onMessage: Listener, onState?: (up: boolean) => void) {

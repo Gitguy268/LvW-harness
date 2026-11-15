@@ -169,14 +169,17 @@ export async function pull(spec: string, opts: { pattern?: string; all?: boolean
   if (est.quota && job.total > free) throw new Error(`This needs ${(job.total / 1024 ** 3).toFixed(2)} GB but the browser allows this site only ${(free / 1024 ** 3).toFixed(2)} GB more. Remove models, or allow more storage.`);
   await (navigator.storage as unknown as { persist?: () => Promise<boolean> }).persist?.();
   let before = 0;
+  const sizes = new Map<string, number>();
   for (const f of files) {
     job.file = f.path;
-    await download(f, `${r.dir}/${f.path}`, opts.signal, (d) => {
+    const n = await download(f, `${r.dir}/${f.path}`, opts.signal, (d) => {
       job.done = before + d;
       opts.emit(job);
     }, (note) => ((job.note = note), opts.emit(job)));
-    before += f.size ?? 0;
+    sizes.set(f.path, n);
+    before += n;
   }
+  job.total = before;
   const main = files.filter((f) => isGguf(f.path) && !isProjector(f.path)).map((f) => f.path).sort()[0];
   const id = short(`${r.dir}/${files.map((f) => f.path).sort().join("+")}`).slice(0, 120);
   const existing = await db.get<BrowserModel>("models", id);
@@ -189,7 +192,7 @@ export async function pull(spec: string, opts: { pattern?: string; all?: boolean
     source: spec.split(":")[0],
     spec,
     dir: r.dir,
-    files: files.map((f) => ({ path: f.path, size: f.size ?? 0, sha256: f.sha256 })),
+    files: files.map((f) => ({ path: f.path, size: sizes.get(f.path) ?? f.size ?? 0, sha256: f.sha256 })),
     mainFile: main,
     size: job.total,
     format: main ? `gguf${quantOf(main) ? ` ${quantOf(main)}` : ""}` : "files",
@@ -199,11 +202,32 @@ export async function pull(spec: string, opts: { pattern?: string; all?: boolean
   return model;
 }
 
-/** Ranged download into OPFS, resuming a .part file, with a streaming SHA-256 check when the source gives one. */
-async function download(f: RemoteFile, path: string, signal: AbortSignal, progress: (done: number) => void, note: (s: string) => void) {
+const LFS_POINTER = "version https://git-lfs.github.com/spec/v1";
+
+/**
+ * Raw GitHub (and some GitLab) URLs serve Git LFS files as a small pointer. Read the first bytes:
+ * a pointer gives the real URL, size and SHA-256 (as the native downloader does).
+ */
+async function followLfs(f: RemoteFile, signal: AbortSignal): Promise<RemoteFile> {
+  if (!f.lfsUrl || (f.size !== undefined && f.size > 1024)) return f;
+  const res = await fetch(f.url, { cache: "no-store", headers: { ...(f.headers ?? {}), range: "bytes=0-511" }, signal });
+  if (!res.ok) return f;
+  const head = await res.text();
+  if (!head.startsWith(LFS_POINTER)) return f;
+  const size = Number(/^size (\d+)$/m.exec(head)?.[1]) || undefined;
+  const sha256 = /^oid sha256:([0-9a-f]{64})$/m.exec(head)?.[1];
+  return { ...f, url: f.lfsUrl, size: f.size && f.size > 1024 ? f.size : size, sha256: f.sha256 ?? sha256 };
+}
+
+/** Ranged download into OPFS, resuming a .part file, with a streaming SHA-256 check when the source gives one. Returns the size written. */
+async function download(file: RemoteFile, path: string, signal: AbortSignal, progress: (done: number) => void, note: (s: string) => void): Promise<number> {
+  const f = await followLfs(file, signal);
   const final = await fileHandle(path, true);
   const have = await final.getFile();
-  if (f.size && have.size === f.size) return progress(f.size);
+  if (f.size && have.size === f.size) {
+    progress(f.size);
+    return f.size;
+  }
   const part = await fileHandle(`${path}.part`, true);
   let offset = (await part.getFile()).size;
   const hasher = f.sha256 ? await createSHA256() : undefined;
@@ -270,6 +294,53 @@ async function download(f: RemoteFile, path: string, signal: AbortSignal, progre
     await w.close();
     await (await dirFor(path.split("/").slice(0, -1).join("/"), false)).removeEntry(`${path.split("/").pop()}.part`);
   }
+  return (await (await fileHandle(path, false)).getFile()).size;
+}
+
+/** Add GGUF files from this computer (a model, optionally with its mmproj) as one model. */
+export async function importFiles(files: File[], onProgress?: (done: number, total: number) => void): Promise<BrowserModel> {
+  if (!files.length) throw new Error("Pick at least one .gguf file.");
+  for (const f of files) {
+    if (!/\.gguf$/i.test(f.name)) throw new Error(`${f.name} isn't a .gguf file.`);
+    if (f.size > MAX_FILE) throw new Error(`${f.name} is ${(f.size / 1024 ** 3).toFixed(2)} GB; the browser can load at most 2 GB per file.`);
+    const magic = new TextDecoder().decode(await f.slice(0, 4).arrayBuffer());
+    if (magic !== "GGUF") throw new Error(`${f.name} doesn't start like a GGUF file.`);
+  }
+  const total = files.reduce((n, f) => n + f.size, 0);
+  const est = await navigator.storage.estimate();
+  if (est.quota && total > est.quota - (est.usage ?? 0)) throw new Error("Not enough room in the browser's storage for these files.");
+  const main = files.find((f) => !isProjector(f.name)) ?? files[0];
+  const dir = `upload/${short(main.name.replace(/\.gguf$/i, ""))}`;
+  let done = 0;
+  const out: BrowserModel["files"] = [];
+  for (const f of files) {
+    const hasher = await createSHA256();
+    const w = await (await fileHandle(`${dir}/${f.name}`, true)).createWritable();
+    for (let p = 0; p < f.size; p += CHUNK) {
+      const chunk = new Uint8Array(await f.slice(p, p + CHUNK).arrayBuffer());
+      hasher.update(chunk);
+      await w.write(chunk);
+      done += chunk.length;
+      onProgress?.(done, total);
+    }
+    await w.close();
+    out.push({ path: f.name, size: f.size, sha256: hasher.digest("hex") });
+  }
+  const id = short(`${dir}/${files.map((f) => f.name).sort().join("+")}`).slice(0, 120);
+  const model: BrowserModel = {
+    id,
+    name: main.name.replace(/\.gguf$/i, ""),
+    source: "upload",
+    spec: `file:${files.map((f) => f.name).join("+")}`,
+    dir,
+    files: out,
+    mainFile: main.name,
+    size: total,
+    format: `gguf${quantOf(main.name) ? ` ${quantOf(main.name)}` : ""}`,
+    addedAt: Date.now(),
+  };
+  await db.put("models", id, model);
+  return model;
 }
 
 export async function disk() {

@@ -23,6 +23,10 @@ const ready = hub.init().catch((err: Error) => {
   send(m: Record<string, unknown> & { type: string }) {
     void ready.then(() => hub.send(m));
   },
+  async upload(files: File[]) {
+    await ready;
+    return hub.upload(files);
+  },
   mediaUrl: () => "",
   previewUrl: async (path: string) => {
     await ready;
