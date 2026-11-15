@@ -41,6 +41,17 @@ interface Instance {
   lastUsed: number;
 }
 const instances = new Map<string, Promise<Instance>>();
+/** Set after a WebGPU crash: later loads use the CPU until the page reloads. */
+let gpuFailed = false;
+/** A wasm abort (WebGPU queue failure, device lost, out of memory) kills the instance. */
+const isCrash = (err: unknown) => /\babort|unreachable|webgpu|device (was )?lost|out of bounds|out of memory/i.test(String((err as Error)?.message ?? err));
+
+async function crashed(name: string, err: unknown) {
+  console.warn("in-browser model crashed", err);
+  if (!gpuFailed) gpuFailed = true;
+  await unload(name);
+  status("The model crashed on the GPU; reloading it on the CPU (slower)…");
+}
 const MAX_LOADED = 2;
 let status: (s: string) => void = () => {};
 export const onModelStatus = (fn: (s: string) => void) => (status = fn);
@@ -66,7 +77,7 @@ async function load(name: string): Promise<Instance> {
     const files = await openModel(m);
     await loadWllama();
     const w = new Wllama({ default: WASM }, { suppressNativeLog: true, allowOffline: true });
-    const gpu = settings.gpu && "gpu" in navigator;
+    const gpu = settings.gpu && !gpuFailed && "gpu" in navigator;
     await w.loadModel(files, { n_ctx: settings.ctx, n_gpu_layers: gpu ? undefined : 0 });
     status("");
     return { w, name: m.name, ctx: settings.ctx, gpu, lastUsed: Date.now() };
@@ -114,24 +125,48 @@ setLocalHandler(async (url, init) => {
   if (url.endsWith("/models")) return Response.json({ object: "list", data: loadedModels().map((id) => ({ id, object: "model" })) });
   if (!url.endsWith("/chat/completions")) return new Response("Not found", { status: 404 });
   const body = JSON.parse(String(init?.body ?? "{}"));
-  const inst = await load(String(body.model));
-  inst.lastUsed = Date.now();
+  const name = String(body.model);
   const params: Record<string, unknown> = { messages: toWllama(body.messages ?? []), max_tokens: body.max_tokens ?? body.max_completion_tokens ?? 2048, abortSignal: init?.signal ?? undefined };
   for (const k of PASS) if (body[k] !== undefined) params[k] = body[k];
-  if (!body.stream) return Response.json(await inst.w.createChatCompletion(params as never));
-  const stream = (await inst.w.createChatCompletion({ ...params, stream: true } as never)) as unknown as AsyncIterable<unknown>;
+  const run = async (stream: boolean) => {
+    const inst = await load(name);
+    inst.lastUsed = Date.now();
+    return inst.w.createChatCompletion({ ...params, stream } as never);
+  };
+  if (!body.stream) {
+    try {
+      return Response.json(await run(false));
+    } catch (err) {
+      if (!isCrash(err)) throw err;
+      await crashed(name, err);
+      return Response.json(await run(false));
+    }
+  }
   const enc = new TextEncoder();
   return new Response(
     new ReadableStream({
       async start(ctrl) {
-        try {
-          for await (const chunk of stream) ctrl.enqueue(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-          ctrl.enqueue(enc.encode("data: [DONE]\n\n"));
-        } catch (err) {
-          if ((err as Error).name !== "AbortError") ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ error: { message: (err as Error).message } })}\n\n`));
-        } finally {
-          ctrl.close();
+        let sent = 0;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            for await (const chunk of (await run(true)) as unknown as AsyncIterable<unknown>) {
+              ctrl.enqueue(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+              sent++;
+            }
+            ctrl.enqueue(enc.encode("data: [DONE]\n\n"));
+            break;
+          } catch (err) {
+            if ((err as Error).name === "AbortError" || init?.signal?.aborted) break;
+            const crash = isCrash(err);
+            if (crash) await crashed(name, err);
+            // Nothing reached the agent yet: try once more (on the CPU after a crash).
+            if (crash && sent === 0 && attempt === 0) continue;
+            const message = crash ? "The in-browser model crashed (WebGPU). It has been reloaded on the CPU; send the message again." : (err as Error).message;
+            ctrl.enqueue(enc.encode(`data: ${JSON.stringify({ error: { message } })}\n\n`));
+            break;
+          }
         }
+        ctrl.close();
       },
     }),
     { headers: { "content-type": "text/event-stream" } },

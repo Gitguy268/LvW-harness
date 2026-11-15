@@ -81,7 +81,7 @@ export const DEFAULTS: Config = {
   checks: { auto: true, maxRounds: 3 },
   critic: { enabled: false },
   server: { host: "127.0.0.1", port: 7878, allowOrigins: ["https://gitguy268.github.io"] },
-  llama: { port: 7879, ctx: 8192, args: [], visionPort: 7885 },
+  llama: { port: 7879, ctx: 16384, args: [], visionPort: 7885 },
   ollamaUrl: process.env.OLLAMA_HOST ? normalizeOllama(process.env.OLLAMA_HOST) : "http://127.0.0.1:11434",
   ollamaCtx: 32768,
   minFreeGB: 2,

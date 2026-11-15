@@ -57,6 +57,10 @@ Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except
 | Default models: K2-Horizon 4x0.9B MoE heretic GGUF, LFM3-VL 2B heretic GGUF, Whisper large-v3-turbo (oxide-lab, whisper.cpp files), Yue2-3B GGUF (audio-cpp), Idol-GGUF; Idol's DINOv3 and FLUX.2-dev encoders | Apache-2.0; LFM Open License v1.0; MIT; **CC-BY-NC-4.0**; Apache-2.0; the encoders are gated, under their own terms | `lvw setup`, `lvw media install`, or the web UI's Models page |
 | Models from Hugging Face, GitHub, GitLab or Ollama | each model's own licence | `lvw model pull` |
 
+## Test files
+
+`test/e2e/fixtures/jfk.wav` is the sample from [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`samples/jfk.wav`, MIT repository): eleven seconds of John F. Kennedy's 1961 inaugural address, a US government work in the public domain. `red-circle.png` was drawn by a script for these tests.
+
 ## Ideas, no code
 
 These projects inspired features that were written from scratch for LvW. No code was copied.

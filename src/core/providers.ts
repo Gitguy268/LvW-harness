@@ -124,7 +124,9 @@ export async function attachVisionModel(resolved: ResolvedChatModel, onStatus?: 
   if (!ref || resolved.senses?.sees) return undefined;
   const record = findModel(ref);
   if (!record) throw new Error(`The vision model "${ref}" isn't downloaded. Run \`lvw setup\` or \`lvw model pull\` it, or clear visionModel in the config.`);
-  const state = await startServer(record, { slot: "vision", onStatus });
+  // A picture costs ~1.4k tokens in pi-ai's estimate on top of a ~3k prompt, and pi-ai keeps
+  // 4k back as a safety margin, so a vision model needs at least 16k to have room to answer.
+  const state = await startServer(record, { slot: "vision", ctx: Math.max(16_384, loadConfig().llama.ctx), onStatus });
   const base = `http://127.0.0.1:${state.port}/v1`;
   const senses = await localSenses("llama", state.modelName, base);
   if (!senses.sees) throw new Error(`${record.name} can't see pictures: it has no vision projector (mmproj). Pull it again so the projector comes along.`);

@@ -931,19 +931,19 @@ async function settingsPage(root) {
   const [cfg, models, modeInfo] = await Promise.all([api("/api/settings"), api("/api/models").catch(() => []), api("/api/modes").catch(() => ({ modes: [] }))]);
   const names = models.filter((m) => m.runnable).map((m) => m.name);
   const datalist = h("datalist", { id: "model-names" }, names.map((n) => h("option", { value: n })));
-  const modelInput = (value, label) => h("input", { type: "text", class: "mono", list: "model-names", value: value ?? "", placeholder: "default model", "aria-label": label });
+  const modelInput = (value, label, placeholder = "default model") => h("input", { type: "text", class: "mono", list: "model-names", value: value ?? "", placeholder, "aria-label": label });
 
   const defMode = h("select", { "aria-label": "Default mode" }, modeInfo.modes.map((m) => h("option", { value: m.id, selected: m.id === cfg.mode }, `${m.label}: ${m.summary}`)));
   const pins = Object.fromEntries(["plan", "ask", "debug", "code", "research"].map((m) => [m, modelInput(cfg.modes?.[m]?.model, `${m} model`)]));
   const planner = modelInput(cfg.modes?.architect?.model, "Architect planner model");
   const editorM = modelInput(cfg.modes?.architect?.editor, "Architect editor model");
-  const vision = modelInput(cfg.visionModel, "Vision model");
+  const vision = modelInput(cfg.visionModel, "Vision model", "none: pictures go to the chat model");
   const chkAuto = h("input", { type: "checkbox", checked: cfg.checks?.auto });
   const chkTest = h("input", { type: "text", class: "mono grow", value: cfg.checks?.test ?? "", placeholder: "found from package.json, go.mod, Cargo.toml, pyproject or Makefile", "aria-label": "Test command" });
   const chkLint = h("input", { type: "text", class: "mono grow", value: cfg.checks?.lint ?? "", placeholder: "found automatically", "aria-label": "Lint command" });
   const chkRounds = h("input", { type: "number", min: 1, max: 6, value: cfg.checks?.maxRounds ?? 3, "aria-label": "Rounds", style: "width:5em" });
   const critOn = h("input", { type: "checkbox", checked: cfg.critic?.enabled });
-  const critModel = modelInput(cfg.critic?.model, "Critic model");
+  const critModel = modelInput(cfg.critic?.model, "Critic model", "the chat's own model");
   const row = (label, ...els) => h("label", { class: "row field-row" }, h("span", { class: "label" }, label), ...els);
 
   const save = async () => {
@@ -990,13 +990,13 @@ function browserSettingsCard(cfg) {
   const keyInputs = Object.fromEntries(KEYS.map(([k, label]) => [k, h("input", { type: "password", class: "mono grow", value: cfg.keys?.[k] ?? "", placeholder: "not set", autocomplete: "off", "aria-label": label })]));
   const proxy = h("input", { type: "url", class: "mono grow", value: cfg.corsProxy ?? "", placeholder: "e.g. https://my-proxy.example/?url={url}", "aria-label": "CORS proxy" });
   const searx = h("input", { type: "url", class: "mono grow", value: cfg.searxngUrl ?? "", placeholder: "a SearXNG instance that allows web pages (CORS)", "aria-label": "SearXNG URL" });
-  const ctxIn = h("input", { type: "number", min: 2048, max: 131072, step: 1024, value: cfg.ctx ?? 8192, "aria-label": "Context size", style: "width:8em" });
+  const ctxIn = h("input", { type: "number", min: 2048, max: 131072, step: 1024, value: cfg.ctx ?? 16384, "aria-label": "Context size", style: "width:8em" });
   const gpu = h("input", { type: "checkbox", checked: cfg.gpu !== false });
   const wsLabel = h("strong", {}, cfg.workspace ?? "");
   const row = (label, ...els) => h("label", { class: "row field-row" }, h("span", { class: "label" }, label), ...els);
   const save = async () => {
     try {
-      await api("/api/settings", { method: "PUT", body: { keys: Object.fromEntries(Object.entries(keyInputs).map(([k, el]) => [k, el.value])), corsProxy: proxy.value.trim(), searxngUrl: searx.value.trim(), ctx: Number(ctxIn.value) || 8192, gpu: gpu.checked } });
+      await api("/api/settings", { method: "PUT", body: { keys: Object.fromEntries(Object.entries(keyInputs).map(([k, el]) => [k, el.value])), corsProxy: proxy.value.trim(), searxngUrl: searx.value.trim(), ctx: Number(ctxIn.value) || 16384, gpu: gpu.checked } });
       toast("Saved in this browser");
     } catch (e) {
       fail(e);

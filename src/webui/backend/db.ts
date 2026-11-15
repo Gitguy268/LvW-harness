@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS: BrowserSettings = {
   critic: { enabled: false },
   permissions: "ask",
   keys: {},
-  ctx: 8192,
+  ctx: 16384,
   gpu: true,
 };
 
