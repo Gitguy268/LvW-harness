@@ -191,6 +191,11 @@ const pages = { chat: chatPage, create: createPage, models: modelsPage, recipes:
 let cleanup = () => {};
 
 function route() {
+  // A connect link opened in a tab that already shows the page: keep it and start over connected.
+  if (/[#&]connect=/.test(location.hash)) {
+    loadRemote();
+    return location.reload();
+  }
   const name = (location.hash.slice(1).split("/")[0] || "chat");
   for (const a of document.querySelectorAll(".sidebar a")) a.classList.toggle("active", a.dataset.page === name);
   cleanup();
@@ -954,10 +959,12 @@ async function settingsPage(root) {
   };
 
   const connectCard = STATIC ? connectionCard() : "";
+  const browserCard = backend.kind === "browser" ? browserSettingsCard(cfg) : "";
   page.append(
     h("h1", {}, "Settings"),
     h("p", { class: "sub" }, "How LvW works by default. Each chat can still pick its own mode and model."),
     connectCard,
+    browserCard,
     datalist,
     h("h2", {}, "Modes"),
     h("div", { class: "card" },
@@ -974,6 +981,42 @@ async function settingsPage(root) {
     h("h2", {}, "Critic"),
     h("div", { class: "card" }, row("Review finished work", critOn), row("Critic model", critModel), h("p", { class: "muted" }, "A second model checks the result and the changes; on a FAIL the agent gets one more round with its notes.")),
     h("div", { class: "row", style: "margin-top:16px" }, h("span", { class: "grow" }), h("button", { class: "primary", onclick: save }, "Save settings")),
+  );
+}
+
+/** In-browser only: keys, network helpers, model memory, and which folder the agent works in. */
+function browserSettingsCard(cfg) {
+  const KEYS = [["openai", "OpenAI"], ["anthropic", "Anthropic"], ["google", "Google Gemini"], ["openrouter", "OpenRouter"], ["groq", "Groq"], ["mistral", "Mistral"], ["hf", "Hugging Face token"], ["gh", "GitHub token"], ["gl", "GitLab token"]];
+  const keyInputs = Object.fromEntries(KEYS.map(([k, label]) => [k, h("input", { type: "password", class: "mono grow", value: cfg.keys?.[k] ?? "", placeholder: "not set", autocomplete: "off", "aria-label": label })]));
+  const proxy = h("input", { type: "url", class: "mono grow", value: cfg.corsProxy ?? "", placeholder: "e.g. https://my-proxy.example/?url={url}", "aria-label": "CORS proxy" });
+  const searx = h("input", { type: "url", class: "mono grow", value: cfg.searxngUrl ?? "", placeholder: "a SearXNG instance that allows web pages (CORS)", "aria-label": "SearXNG URL" });
+  const ctxIn = h("input", { type: "number", min: 2048, max: 131072, step: 1024, value: cfg.ctx ?? 8192, "aria-label": "Context size", style: "width:8em" });
+  const gpu = h("input", { type: "checkbox", checked: cfg.gpu !== false });
+  const wsLabel = h("strong", {}, cfg.workspace ?? "");
+  const row = (label, ...els) => h("label", { class: "row field-row" }, h("span", { class: "label" }, label), ...els);
+  const save = async () => {
+    try {
+      await api("/api/settings", { method: "PUT", body: { keys: Object.fromEntries(Object.entries(keyInputs).map(([k, el]) => [k, el.value])), corsProxy: proxy.value.trim(), searxngUrl: searx.value.trim(), ctx: Number(ctxIn.value) || 8192, gpu: gpu.checked } });
+      toast("Saved in this browser");
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const ws = (path) => api(path, { method: "POST" }).then((r) => { wsLabel.textContent = r.label; toast(`Working in the ${r.label}`); }, fail);
+  return h("div", {},
+    h("h2", {}, "This browser"),
+    h("div", { class: "card" },
+      row("Working folder", wsLabel, h("button", { class: "small", onclick: () => ws("/api/workspace/open") }, "Open a folder…"), cfg.workspaceKind === "folder" ? h("button", { class: "small", onclick: () => ws("/api/workspace/close") }, "Use the browser workspace") : ""),
+      h("p", { class: "muted" }, "The agent's files live in this site's private storage unless you open a real folder (Chrome, Edge and Arc; Brave needs brave://flags/#file-system-access-api)."),
+      row("Context size", ctxIn, h("span", { class: "muted" }, "tokens for in-browser models (more needs more memory)")),
+      row("Use the GPU (WebGPU)", gpu),
+      h("p", { class: "muted" }, "API keys and tokens below stay in this browser's storage and go only to their own service. Hosted models then show up as provider:model, e.g. anthropic:claude-sonnet-5-5."),
+      ...KEYS.map(([k, label]) => row(label, keyInputs[k])),
+      row("CORS proxy", proxy),
+      h("p", { class: "muted" }, "GitHub release files and gitlab.com download links don't allow web pages to fetch them. A proxy you trust fixes that, or connect your LvW-harness."),
+      row("Web search", searx),
+      h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "grow" }), h("button", { class: "primary", onclick: save }, "Save browser settings")),
+    ),
   );
 }
 

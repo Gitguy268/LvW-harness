@@ -66,7 +66,7 @@ summary { cursor:pointer; font-weight:600; }
 </head>
 <body>
 <main>
-<div class="bar"><span>Project page</span><a href="https://github.com/${slugRepo}">View on GitHub</a></div>
+<div class="bar"><span>Project page</span><span><a href="webui/">Open the web UI</a> · <a href="https://github.com/${slugRepo}">View on GitHub</a></span></div>
 ${body}
 </main>
 </body>

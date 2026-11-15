@@ -4,7 +4,7 @@
 
 **A local-first AI agent with a one-command model manager for Hugging Face, GitHub and GitLab.**
 
-[Install](#install) · [Models](#models) · [Media](#media) · [Agent](#agent) · [Web UI](#web-ui) · [VPS](#vps) · [Commands](#all-commands) · [Credits](NOTICE.md)
+[Web UI in your browser](https://gitguy268.github.io/LvW-harness/webui/) · [Install](#install) · [Default models](#default-models) · [Models](#models) · [Media](#media) · [Agent](#agent) · [Web UI](#web-ui) · [VPS](#vps) · [Commands](#all-commands) · [Credits](NOTICE.md)
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-2f6f62)
 ![Runtime: Bun 1.4](https://img.shields.io/badge/runtime-Bun%201.4-2f6f62)
@@ -20,10 +20,12 @@ LvW runs an agent on your own computer or server. It reads and edits files, runs
 The model manager is the main feature. One command downloads a model from Hugging Face, a GitHub or GitLab release, any URL or Ollama, and one command removes it again with every file it brought.
 
 ```sh
-lvw model pull hf:unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M   # 2.5 GB
+lvw model pull hf:Lucasgitguy-co/K2-Horizon-4x0.9B-MoE-heretic-GGUF:Q5_K_M   # 2.2 GB
 lvw chat
-lvw model rm Qwen3-4B-Instruct-2507-Q4_K_M                       # frees the 2.5 GB
+lvw model rm K2-Horizon-4x0.9B-MoE-heretic-Q5_K_M                              # frees the 2.2 GB
 ```
+
+**No install needed to try it:** [the web UI runs in your browser](https://gitguy268.github.io/LvW-harness/webui/). It downloads GGUF models into the browser's own storage and runs them there (WebGPU when your browser has it), with the same chat, modes, approvals, checkpoints, recipes and model manager. It can also drive your own LvW-harness, see [the web UI in your browser](#in-your-browser).
 
 <!-- live-links -->
 **Project page:** [gitguy268.github.io/LvW-harness](https://gitguy268.github.io/LvW-harness/) · [lvw-harness.vercel.app](https://lvw-harness.vercel.app)
@@ -84,13 +86,36 @@ On a Mac you can also double-click **`start.command`**. It installs what's missi
 
 To build a single binary that doesn't need Bun: `bun run build` (this machine) or `bun run build:all` (macOS arm64, Linux x64 and Linux arm64, in `dist/`).
 
+## Default models
+
+`lvw setup` offers the chat and vision models; `lvw media install transcribe|music|3d` sets up the rest. The web UI suggests the same models on its Models page.
+
+| Role | Model | Licence | Runs on | In the browser |
+|---|---|---|---|---|
+| Chat | [K2-Horizon 4x0.9B MoE heretic](https://huggingface.co/Lucasgitguy-co/K2-Horizon-4x0.9B-MoE-heretic-GGUF), Q5_K_M (2.2 GB) | Apache-2.0 | llama.cpp | yes, Q4_K_M (1.87 GB): the browser loads at most 2 GB per file |
+| Pictures | [LFM3-VL 2B heretic](https://huggingface.co/Lucasgitguy-co/lfm3-vl-2b-heretic-gguf), Q4_K_M + F16 projector (1.5 GB) | LFM Open License v1.0 | llama.cpp, a second server on port 7885 | yes |
+| Speech to text | [Whisper large-v3-turbo q4_1](https://huggingface.co/oxide-lab/whisper-large-v3-turbo-GGUF/blob/main/whisper.cpp/whisper-large-v3-turbo-q4_1.gguf) (0.52 GB) | MIT | whisper.cpp `whisper-server` | yes, on the CPU (slow: about ten times the audio length) |
+| Music | [Yue2-3B](https://huggingface.co/audio-cpp/Yue2-3B-GGUF) Q4_0 + F16 VAE (2.9 GB) | CC-BY-NC-4.0, non-commercial | [audio.cpp](https://github.com/0xShug0/audio.cpp) v0.9.5 | no; through a connected LvW-harness |
+| Picture to 3D | [Idol](https://huggingface.co/TimeLordRaps/Idol-GGUF) Q8_0 (1 GB, plus 3.7 GB of gated encoders) | Apache-2.0; the encoders have their own gated terms | [idol.cpp](https://github.com/TimeLordRaps/idol.cpp) v0.1.1 | no; through a connected LvW-harness |
+
+<details>
+<summary><b>Notes on these models</b></summary>
+
+- **Whisper:** oxide-lab's repo has two kinds of `.gguf`. The files in its root are in [Candle](https://github.com/huggingface/candle)'s GGUF layout, which whisper.cpp can't read. LvW uses the q4_1 file from its `whisper.cpp/` folder, the same model and quantization in whisper.cpp's own format (the `.gguf` name notwithstanding).
+- **K2-Horizon** makes tool calls and writes its reasoning first. With 0.9B active parameters it is quick, but long chains of tool calls go better with a bigger model.
+- **LFM3-VL** answers a turn that carries a picture when the chat model can't see (`visionModel` in the config, or Settings in the web UI). Pulling a GGUF repo now brings its `mmproj` projector along automatically.
+- **Yue2** sings lyrics: give lyrics, or the prompt becomes one verse. The style prompt goes to `style=`. Weights are for non-commercial use only.
+- **Idol** reconstructs a Gaussian point cloud from one picture; LvW turns its mesh into a GLB for the 3D viewer. Its native decoders are x86-64 only, so on Apple silicon they run through Rosetta 2 (macOS 15 or later), on the CPU. It needs Hugging Face access to [DINOv3](https://huggingface.co/facebook/dinov3-vith16plus-pretrain-lvd1689m) and the [FLUX.2-dev](https://huggingface.co/black-forest-labs/FLUX.2-dev) autoencoder: accept their terms (read them first; they are not Apache-2.0), then `lvw login hf`. `lvw doctor` checks that access. TripoSR stays available without it.
+
+</details>
+
 ## Models
 
 <img src="docs/images/demo-pull-remove.webp" alt="Animated demo: typing a Hugging Face source, choosing the Q2_K file, downloading it with a progress bar, then removing it" width="760">
 
 | Source | Example | What it downloads |
 |---|---|---|
-| Hugging Face | `hf:unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M` | one quant; leave out `:Q4_K_M` to choose from a list, add `--all` for the whole repo |
+| Hugging Face | `hf:unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M` | one quant (plus the vision projector if the repo has one); leave out `:Q4_K_M` to choose from a list, add `--all` for the whole repo |
 | GitHub release | `gh:owner/repo@v1.2:*.gguf` | release assets matching the glob (newest release without `@tag`) |
 | GitLab release | `gl:group/project@v1.2:*.gguf` | the same for gitlab.com, or your own GitLab with `LVW_GITLAB_URL` |
 | Any URL | `https://example.com/model.gguf` | that file |
@@ -158,7 +183,9 @@ Replicate models take different inputs; LvW sends `prompt`, `image` and `duratio
 | Speech and transcription | local | local | local | local | local |
 | 3D and music | local (Apple GPU) | hosted API (no PyTorch wheels) | local | local | local |
 
-Pick a GPU build of `sd-server` with `lvw media install sd --variant vulkan` (Linux) or `--variant cuda12` (Windows). Ports: `sd-server` 7880, 3D 7881, music 7882.
+Pick a GPU build of `sd-server` with `lvw media install sd --variant vulkan` (Linux) or `--variant cuda12` (Windows). Ports: `sd-server` 7880, 3D 7881, music 7882, `whisper-server` 7883, idol.cpp 7884.
+
+The default engines for transcription, music and 3D install their programs on first use: `whisper-server` from Homebrew on a Mac (a pinned source build elsewhere, which needs git and cmake), audio.cpp's release build (macOS, Linux x64), and idol.cpp's release package with its Python packages (macOS through Rosetta 2, Linux x64; needs uv).
 </details>
 
 ## Agent
@@ -176,6 +203,29 @@ lvw research "how do llama.cpp quant types compare?"
 | **Memory** | Markdown notes in `~/.lvw/memory` (everywhere) and `.lvw/memory` (this project), with full-text search. `AGENTS.md` or `CLAUDE.md` in the folder are read as project rules |
 | **Skills** | the `SKILL.md` format. 18 skills are bundled: design work with `impeccable`, repository onboarding, code review, debugging, TDD, security audit and more. `lvw skill browse` lists the 90-odd plugins of [wshobson/agents](https://github.com/wshobson/agents), and adding one brings its skills and subagents; `lvw skill add gh:owner/repo` installs others. Only names and descriptions go into the prompt, and the full text loads when needed |
 | **Budgets** | 40 turns and 400k tokens per run by default (`budgets` in the config, `--max-turns`) |
+
+<details>
+<summary><b>Modes, checkpoints, the test loop, recipes and the critic</b></summary>
+
+```sh
+lvw chat --mode plan                 # look around and write a plan; changes nothing
+lvw run --mode debug "the upload test fails on Linux"
+lvw undo                             # put back what the last turn changed
+lvw recipe new release-notes && lvw recipe run release-notes -p since=v0.1.0
+```
+
+| | |
+|---|---|
+| **Modes** | Code (default), Plan and Ask (read-only, whatever approval setting is on), Debug (reproduce first, then fix), Architect (a planner model writes the plan, an editor model carries it out) and Research. Pin a model per mode in the config (`modes.plan.model`, `modes.architect.model` / `.editor`) or on the web UI's Settings page. In chat: `/mode plan`, `/architect` |
+| **Checkpoints** | Before the agent first changes anything in a turn, LvW snapshots the folder into a shadow git repo under `~/.lvw/checkpoints`; your own `.git` is never touched. `lvw undo`, `lvw checkpoints [--diff id]`, `/undo` and `/restore <id>` in chat, or the ↩ button in the web UI. A restore saves the current state first, so it can be undone too. Folders over 500 MB or 20,000 files, and files over 20 MB, are skipped |
+| **Test and lint loop** | After a turn that changed files, LvW runs the project's test and lint commands (found from package.json, go.mod, Cargo.toml, pyproject or a Makefile, or set with `checks.test` / `checks.lint`) and hands failures back to the agent for up to `checks.maxRounds` rounds. Running them asks first unless approvals are on auto. `/test` runs them now |
+| **Repo map** | A list of the folder's source files and their main functions and classes, most-referenced first. It goes into the prompt when the model's context window is 12k tokens or more, and the `repo_map` tool gives it on demand |
+| **Recipes** | YAML files with a prompt, mode, model, skills, `{{parameters}}` and sub-recipes, in `~/.lvw/recipes` or `.lvw/recipes`. Share them as files; the web UI imports and downloads them |
+| **Critic** | `lvw config set critic.enabled true`: a second model call reviews the result and the diff, and on FAIL the agent gets one more round with the notes |
+| **Injection check** | Text from web pages, the browser tools and MCP servers is passed to the model as untrusted data, and flagged with a warning when it looks like it is trying to give instructions |
+| **Fan-out** | The `fan_out` tool runs one helper agent per row of a CSV, a few at a time, and returns the CSV with their answers |
+
+</details>
 
 <details>
 <summary><b>Tasks, routines and approvals</b></summary>
@@ -221,7 +271,7 @@ To let the browser tools use your logged-in browser, start it with `--remote-deb
 lvw serve                          # http://127.0.0.1:7878
 ```
 
-The web UI has pages for Chat (with approval cards, attachments, voice notes and a preview of HTML or SVG the agent writes), Create (images, video, speech, music and 3D), Models, Tasks, Memory, Skills and Compare (one prompt sent to several models side by side). It loads nothing from the internet and works offline.
+The web UI has pages for Chat (with a mode picker, approval cards, attachments, voice notes, checkpoints and a preview of HTML or SVG the agent writes), Create (images, video, speech, music and 3D), Models, Recipes, Tasks, Memory, Skills, Compare (one prompt sent to several models side by side) and Settings. It loads nothing from the internet and works offline.
 
 <table>
 <tr>
@@ -229,6 +279,25 @@ The web UI has pages for Chat (with approval cards, attachments, voice notes and
 <td><img src="docs/images/skills.webp" alt="Skills page listing bundled skills"></td>
 </tr>
 </table>
+
+### In your browser
+
+[gitguy268.github.io/LvW-harness/webui](https://gitguy268.github.io/LvW-harness/webui/) is the same UI with the harness running in the page itself:
+
+- **Models:** download GGUF files from Hugging Face, GitHub repo files and GitLab with the same resolvers as `lvw model pull`, resumable and checked against their SHA-256, into the browser's private storage (OPFS). The Models page shows how much room the browser gives the site.
+- **Running them:** [wllama](https://github.com/ngxson/wllama) (llama.cpp in WebAssembly, WebGPU when available). The model sits behind the same OpenAI-compatible path LvW uses for `llama-server`, so tool calls, reasoning, compaction and retries behave the same. Hosted models (OpenAI, Anthropic, Google, OpenRouter and more) work with a key in Settings, kept in that browser only.
+- **Files and shell:** the agent works in a folder in the browser's storage, or in a real folder you open (Chrome, Edge and Arc; Brave has the File System Access API behind brave://flags). The shell is [just-bash](https://github.com/vercel-labs/just-bash), a bash emulation: ls, cat, grep, sed, awk, find, jq, curl and friends work, but there is no node, python, git or npm. The test loop runs only commands you set in Settings.
+- **Everything else** from the desktop version: modes, approvals, checkpoints, recipes, critic, injection check, fan-out, memory, skills (bundled, or installed from GitHub), tasks and routines (while the tab is open), Compare, and speech to text with Whisper.
+
+Connect it to your own harness for a real shell, Yue2, Idol, and image or video generation:
+
+```sh
+lvw serve --allow-web    # prints a link that carries its web token (kept in ~/.lvw/config.json)
+```
+
+The page then talks to `http://127.0.0.1:7878`. Only the origins in `server.allowOrigins` (the GitHub Pages site by default) may connect, and only with the web token, even on your own machine. Tested in Chromium. Safari blocks pages on https from reaching `http://127.0.0.1`, and recent Chrome versions ask once for permission to reach your local network.
+
+Browsers stop some downloads: GitHub release files and gitlab.com `/-/` links send no CORS headers, so the page can't fetch them. Set a CORS proxy you trust in Settings, or connect your LvW-harness.
 
 ## VPS
 
@@ -305,7 +374,7 @@ Setup
   lvw setup [--yes]   lvw doctor   lvw config [get|set|path]   lvw version
 ```
 
-Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-server 7879, sd-server 7880, 3D 7881, music 7882.
+Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-server 7879, sd-server 7880, 3D 7881, music 7882, whisper-server 7883, idol.cpp 7884, vision llama-server 7885.
 
 ## Limits
 
@@ -316,6 +385,7 @@ Data lives in `~/.lvw` (set `LVW_HOME` to move it). Ports: web UI 7878, llama-se
 - 3D works on one object on a plain background. Landscapes and busy scenes give an error.
 - Transcription without ffmpeg reads WAV files only.
 - `--sandbox docker` covers shell commands only. File tools still work directly in the folder you started in.
+- The web UI in the browser can load at most 2 GB per model file and keeps up to two models in memory (chat and vision). Its shell is an emulation, and Whisper there runs on the CPU only.
 
 ## Contributing and licence
 
