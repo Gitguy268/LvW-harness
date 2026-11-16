@@ -11,15 +11,30 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
 }
 
+/** How the agent works: what it may change and how it is told to think. See src/core/modes.ts. */
+export type AgentMode = "code" | "plan" | "ask" | "debug" | "architect" | "research";
+
 export interface Config {
   /** Default model: a registry name, "local", "ollama:<name>" or "<provider>:<model-id>". */
   model?: string;
+  /** Answers turns that carry a picture when the chat model can't see (a registry name with an mmproj). */
+  visionModel?: string;
+  /** The mode new chats start in. */
+  mode: AgentMode;
+  /** A model pinned to a mode (Kilo-style sticky models). architect.model plans, architect.editor carries out. */
+  modes: Partial<Record<AgentMode, { model?: string; editor?: string }>>;
+  /** Test and lint commands run after a turn that changed files; failures go back to the agent. */
+  checks: { test?: string; lint?: string; auto: boolean; maxRounds: number };
+  /** A second look at the finished work. */
+  critic: { enabled: boolean; model?: string };
   permissions: PermissionMode;
   sandbox: "host" | "docker";
   sandboxImage: string;
   sandboxNetwork: "none" | "bridge";
-  server: { host: string; port: number; token?: string };
-  llama: { port: number; ctx: number; args: string[]; binary?: string };
+  /** allowOrigins: web pages (like the LvW web UI on GitHub Pages) that may connect with the token. */
+  server: { host: string; port: number; token?: string; webToken?: string; allowOrigins: string[] };
+  /** visionPort: the second llama-server that runs visionModel. */
+  llama: { port: number; ctx: number; args: string[]; binary?: string; visionPort: number };
   ollamaUrl: string;
   /** Context window the Ollama server gives a model. Compaction and offloading are sized from it. */
   ollamaCtx: number;
@@ -38,6 +53,11 @@ export interface MediaConfig {
   sdPort: number;
   threeDPort: number;
   musicPort: number;
+  whisperPort: number;
+  idolPort: number;
+  /** Path to whisper-server, audiocpp_cli if you built them yourself. */
+  whisperServer?: string;
+  audiocpp?: string;
   /** Path to sd-server if you built it yourself. */
   sdServer?: string;
   /** Extra sd-server arguments, e.g. ["--flash-attn","on"]. */
@@ -56,8 +76,12 @@ export const DEFAULTS: Config = {
   sandbox: "host",
   sandboxImage: "debian:stable-slim",
   sandboxNetwork: "none",
-  server: { host: "127.0.0.1", port: 7878 },
-  llama: { port: 7879, ctx: 8192, args: [] },
+  mode: "code",
+  modes: {},
+  checks: { auto: true, maxRounds: 3 },
+  critic: { enabled: false },
+  server: { host: "127.0.0.1", port: 7878, allowOrigins: ["https://gitguy268.github.io"] },
+  llama: { port: 7879, ctx: 16384, args: [], visionPort: 7885 },
   ollamaUrl: process.env.OLLAMA_HOST ? normalizeOllama(process.env.OLLAMA_HOST) : "http://127.0.0.1:11434",
   ollamaCtx: 32768,
   minFreeGB: 2,
@@ -65,7 +89,7 @@ export const DEFAULTS: Config = {
   budgets: { maxTurns: 40, maxTokens: 400_000 },
   mcpServers: {},
   telegram: { allowedChatIds: [] },
-  media: { sdPort: 7880, threeDPort: 7881, musicPort: 7882, sdArgs: [], defaults: {}, api: {} },
+  media: { sdPort: 7880, threeDPort: 7881, musicPort: 7882, whisperPort: 7883, idolPort: 7884, sdArgs: [], defaults: {}, api: {} },
 };
 
 function normalizeOllama(host: string) {

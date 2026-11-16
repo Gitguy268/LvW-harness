@@ -20,8 +20,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
       - run: npm install --no-save --prefix /tmp/landing marked@15.0.12
       - run: NODE_PATH=/tmp/landing/node_modules node .github/landing.cjs _landing
+      # The web UI at /LvW-harness/webui/: the same UI as `lvw serve`, with an in-page harness.
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/build-webui.ts _landing/webui
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _landing

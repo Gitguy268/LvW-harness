@@ -4,7 +4,12 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import pkg from "../../package.json" with { type: "json" };
-import { loadConfig, saveConfig, type PermissionMode } from "../config.ts";
+import { loadConfig, saveConfig, type Config, type PermissionMode } from "../config.ts";
+import { gitCheckpoints } from "../core/checkpoints-git.ts";
+import { isMode, MODES } from "../core/modes.ts";
+import { DEFAULT_MODELS } from "../models/defaults.ts";
+import { renderRecipe } from "../core/recipes.ts";
+import { findRecipe, listRecipes, removeRecipe, saveRecipe } from "../core/recipes-fs.ts";
 import { deleteSession, getSessionMessages, listSessions, type Attachment } from "../core/session.ts";
 import { fitFor, freeBytes } from "../models/disk.ts";
 import { searchHf } from "../models/hf.ts";
@@ -64,6 +69,9 @@ export interface ServeOptions {
   port: number;
   token?: string;
   cwd: string;
+  /** Lets the web pages in server.allowOrigins connect with this token (`lvw serve --allow-web`). */
+  webToken?: string;
+  allowOrigins?: string[];
 }
 
 export function createServer(opts: ServeOptions) {
@@ -89,10 +97,52 @@ export function createServer(opts: ServeOptions) {
       return false;
     }
   };
+  // Connect mode: a page from an allowed origin (the LvW web UI) may call the API, but only with
+  // the web token, even on loopback. Browsers can't set headers on WebSockets, so /ws takes ?token=.
+  const allowOrigins = new Set(opts.allowOrigins ?? []);
+  const webOrigin = (req: Request) => {
+    const origin = req.headers.get("origin");
+    return origin && allowOrigins.has(origin) && !sameOrigin(req) ? origin : undefined;
+  };
+  const webAuthed = (req: Request) => {
+    if (!opts.webToken) return false;
+    const header = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    const given = header ?? new URL(req.url).searchParams.get("token") ?? undefined;
+    return Boolean(given && (safeEqual(given, opts.webToken) || (opts.token && safeEqual(given, opts.token))));
+  };
+  const cors = (origin: string, res: Response) => {
+    res.headers.set("access-control-allow-origin", origin);
+    res.headers.set("vary", "Origin");
+    return res;
+  };
+  const preflight = (req: Request, origin: string) =>
+    cors(
+      origin,
+      new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-headers": "authorization, content-type",
+          "access-control-max-age": "600",
+          ...(req.headers.get("access-control-request-private-network") === "true" ? { "access-control-allow-private-network": "true" } : {}),
+        },
+      }),
+    );
   const body = async <T>(req: Request) => (await req.json().catch(() => ({}))) as T;
   const guard =
     (fn: (req: Request & { params: Record<string, string> }) => Response | Promise<Response>) =>
     async (req: Request & { params: Record<string, string> }) => {
+      const web = webOrigin(req);
+      if (web) {
+        if (req.method === "OPTIONS") return preflight(req, web);
+        if (!opts.webToken) return cors(web, bad("This LvW-harness doesn't accept web connections. Start it with `lvw serve --allow-web`.", 403));
+        if (!webAuthed(req)) return cors(web, bad("Wrong or missing token.", 401));
+        try {
+          return cors(web, await fn(req));
+        } catch (err) {
+          return cors(web, bad((err as Error).message, 500));
+        }
+      }
       if (!sameOrigin(req)) return bad("Cross-site request refused.", 403);
       if (!authed(req)) return bad("Log in first.", 401);
       try {
@@ -101,12 +151,17 @@ export function createServer(opts: ServeOptions) {
         return bad((err as Error).message, 500);
       }
     };
+  // Object routes only answer the methods they list, so give every one a preflight answer.
+  const withPreflight = <T extends Record<string, unknown>>(routes: T): T => {
+    for (const v of Object.values(routes)) if (v && typeof v === "object" && !("OPTIONS" in v)) (v as Record<string, unknown>).OPTIONS = guard(() => new Response(null, { status: 204 }));
+    return routes;
+  };
 
   const server = Bun.serve<{ off?: () => void }>({
     hostname: opts.host,
     port: opts.port,
     idleTimeout: 120,
-    routes: {
+    routes: withPreflight({
       "/": () => new Response(indexHtml, { headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'self'; style-src 'self' 'unsafe-inline'" } }),
       "/app.js": () => new Response(appJs, { headers: { "content-type": "text/javascript; charset=utf-8" } }),
       "/style.css": () => new Response(styleCss, { headers: { "content-type": "text/css; charset=utf-8" } }),
@@ -306,6 +361,81 @@ export function createServer(opts: ServeOptions) {
       },
       "/api/skills/:name/approve": { POST: guard((req) => json({ path: approveSkill(req.params.name) })) },
       "/api/skills/:name": { DELETE: guard((req) => json(removeSkill(decodeURIComponent(req.params.name), opts.cwd))) },
+      "/api/defaults": guard(async () => {
+        const { mediaStatus } = await import("../media/make.ts");
+        const media = await mediaStatus().catch(() => []);
+        const pulled = (await listAll()).map((m) => (m as { spec?: string }).spec ?? "");
+        const nativeSize: Record<string, number> = { chat: 2.18, vision: 1.48 };
+        return json(
+          DEFAULT_MODELS.map((d) => {
+            const isMedia = d.role !== "chat" && d.role !== "vision";
+            const entry = isMedia ? media.find((e) => e.id === d.native) : undefined;
+            return { ...d, spec: d.native, media: isMedia, sizeGB: entry?.sizeGB ?? nativeSize[d.role], installed: isMedia ? Boolean(entry?.ready) : pulled.some((p) => p.includes(d.repo)) };
+          }),
+        );
+      }),
+      "/api/modes": guard(() => {
+        const cfg = loadConfig();
+        return json({ modes: Object.values(MODES), current: cfg.mode, pinned: cfg.modes });
+      }),
+      "/api/settings": {
+        GET: guard(() => {
+          const cfg = loadConfig();
+          return json({ mode: cfg.mode, modes: cfg.modes, checks: cfg.checks, critic: cfg.critic, visionModel: cfg.visionModel ?? null, model: cfg.model ?? null });
+        }),
+        PUT: guard(async (req) => {
+          const b = await body<{ mode?: string; modes?: Config["modes"]; checks?: Partial<Config["checks"]>; critic?: Partial<Config["critic"]>; visionModel?: string | null }>(req);
+          const cfg = loadConfig();
+          if (b.mode !== undefined) {
+            if (!isMode(b.mode)) return bad(`Unknown mode ${b.mode}`);
+            cfg.mode = b.mode;
+          }
+          if (b.modes) cfg.modes = Object.fromEntries(Object.entries(b.modes).filter(([k]) => isMode(k))) as Config["modes"];
+          if (b.checks) cfg.checks = { ...cfg.checks, ...b.checks, maxRounds: Math.max(1, Math.min(6, Number(b.checks.maxRounds ?? cfg.checks.maxRounds))) };
+          if (b.critic) cfg.critic = { ...cfg.critic, ...b.critic };
+          if (b.visionModel !== undefined) cfg.visionModel = b.visionModel || undefined;
+          saveConfig(cfg);
+          return json({ ok: true });
+        }),
+      },
+      "/api/checkpoints": guard(async (req) => {
+        const store = gitCheckpoints(new URL(req.url).searchParams.get("cwd") || opts.cwd);
+        return json(store ? await store.list(40) : []);
+      }),
+      "/api/checkpoints/diff": guard(async (req) => {
+        const q = new URL(req.url).searchParams;
+        const store = gitCheckpoints(q.get("cwd") || opts.cwd);
+        if (!store) return bad("Checkpoints don't work in this folder.");
+        return json({ diff: await store.diff(q.get("id") ?? "") });
+      }),
+      "/api/checkpoints/restore": {
+        POST: guard(async (req) => {
+          const b = await body<{ cwd?: string; id?: string }>(req);
+          const store = gitCheckpoints(b.cwd || opts.cwd);
+          if (!store || !b.id) return bad("Nothing to restore.");
+          return json(await store.restore(b.id));
+        }),
+      },
+      "/api/recipes": {
+        GET: guard((req) => {
+          const cwd = new URL(req.url).searchParams.get("cwd") || opts.cwd;
+          return json(listRecipes(cwd).map((r) => ({ ...r, text: existsSync(r.path) ? readFileSync(r.path, "utf8") : "" })));
+        }),
+        PUT: guard(async (req) => {
+          const b = await body<{ text?: string; scope?: "project" | "user"; cwd?: string }>(req);
+          return json({ path: saveRecipe(String(b.text ?? ""), b.cwd || opts.cwd, b.scope === "project" ? "project" : "user") });
+        }),
+      },
+      "/api/recipes/:name": {
+        DELETE: guard((req) => json({ path: removeRecipe(decodeURIComponent(req.params.name), new URL(req.url).searchParams.get("cwd") || opts.cwd) })),
+      },
+      "/api/recipes/:name/render": {
+        POST: guard(async (req) => {
+          const b = await body<{ values?: Record<string, string>; cwd?: string }>(req);
+          const r = findRecipe(decodeURIComponent(req.params.name), b.cwd || opts.cwd).recipe!;
+          return json({ prompt: renderRecipe(r, b.values ?? {}), mode: r.mode ?? null, model: r.model ?? null });
+        }),
+      },
       "/api/compare": {
         POST: guard(async (req) => {
           const b = await body<{ prompt?: string; models?: string[] }>(req);
@@ -325,12 +455,13 @@ export function createServer(opts: ServeOptions) {
           headers: { "content-type": PREVIEW_TYPES[extname(p).toLowerCase()] ?? "application/octet-stream", "content-security-policy": "sandbox allow-scripts; default-src 'self' data: 'unsafe-inline'" },
         });
       }),
-    },
+    }),
     fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
-        if (!sameOrigin(req)) return bad("Cross-site request refused.", 403);
-        if (!authed(req)) return bad("Log in first.", 401);
+        const web = webOrigin(req);
+        if (web ? !webAuthed(req) : !sameOrigin(req)) return bad(web ? "Wrong or missing token." : "Cross-site request refused.", web ? 401 : 403);
+        if (!web && !authed(req)) return bad("Log in first.", 401);
         if (srv.upgrade(req, { data: {} })) return undefined;
         return bad("WebSocket upgrade failed");
       }
@@ -353,7 +484,7 @@ export function createServer(opts: ServeOptions) {
         }
         if (msg.type === "chat") {
           hub
-            .prompt({ text: String(msg.text ?? ""), attachments: Array.isArray(msg.attachments) ? (msg.attachments as Attachment[]).filter((a) => typeof a?.data === "string" && typeof a?.mime === "string").slice(0, 8) : undefined, sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
+            .prompt({ agentMode: isMode(msg.agentMode) ? msg.agentMode : undefined, text: String(msg.text ?? ""), attachments: Array.isArray(msg.attachments) ? (msg.attachments as Attachment[]).filter((a) => typeof a?.data === "string" && typeof a?.mime === "string").slice(0, 8) : undefined, sessionId: msg.sessionId as string | undefined, model: (msg.model as string) || undefined, cwd: (msg.cwd as string) || undefined, permissions: (msg.permissions as PermissionMode) || undefined, mode: msg.mode === "research" ? "research" : "default" })
             .catch((err: Error) => ws.send(JSON.stringify({ type: "error", sessionId: msg.sessionId, error: err.message })));
         } else if (msg.type === "abort") hub.abort(String(msg.sessionId));
         else if (msg.type === "approve") hub.answer(String(msg.id), (msg.answer as "yes" | "no" | "always") ?? "no");
@@ -364,7 +495,7 @@ export function createServer(opts: ServeOptions) {
 }
 
 export async function serveCommand(argv: string[]) {
-  const { values } = parseArgs({ args: argv, options: { host: { type: "string" }, port: { type: "string" }, cwd: { type: "string" }, "no-scheduler": { type: "boolean" } } });
+  const { values } = parseArgs({ args: argv, options: { host: { type: "string" }, port: { type: "string" }, cwd: { type: "string" }, "no-scheduler": { type: "boolean" }, "allow-web": { type: "boolean" } } });
   const cfg = loadConfig();
   const host = values.host ?? cfg.server.host;
   const port = Number(values.port ?? process.env.PORT ?? cfg.server.port);
@@ -376,7 +507,19 @@ export async function serveCommand(argv: string[]) {
     saveConfig(cfg);
     console.log(`Created a login token (saved in ${ensureDirs().config}):\n  ${token}\n`);
   }
-  const server = createServer({ host, port, token: LOOPBACK.has(host) ? process.env.LVW_TOKEN : token, cwd: values.cwd ?? process.cwd() });
+  // Connect mode: the web UI (server.allowOrigins) may use this harness with its own token.
+  let webToken = process.env.LVW_WEB_TOKEN ?? cfg.server.webToken;
+  if (values["allow-web"] && !webToken) {
+    webToken = randomBytes(24).toString("base64url");
+    cfg.server.webToken = webToken;
+    saveConfig(cfg);
+  }
+  const server = createServer({ host, port, token: LOOPBACK.has(host) ? process.env.LVW_TOKEN : token, cwd: values.cwd ?? process.cwd(), webToken: values["allow-web"] ? webToken : undefined, allowOrigins: cfg.server.allowOrigins });
+  if (values["allow-web"] && webToken) {
+    const local = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${server.port}`;
+    console.log(`Web connections allowed from: ${cfg.server.allowOrigins.join(", ")}`);
+    console.log(`Connect the web UI with this link (the token stays in your browser):\n  https://gitguy268.github.io/LvW-harness/webui/#connect=${encodeURIComponent(local)}&token=${webToken}\n`);
+  }
   if (!values["no-scheduler"]) hub.startScheduler();
   console.log(`LvW web UI on http://${host === "0.0.0.0" ? "localhost" : host}:${server.port}  ${LOOPBACK.has(host) ? "(this machine only)" : "(login required)"}`);
 }

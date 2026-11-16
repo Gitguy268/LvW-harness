@@ -23,6 +23,7 @@ export async function runCommand(argv: string[], mode: "default" | "research" = 
     permissions: a.permissions,
     sandbox: a.sandbox,
     mode,
+    agentMode: a.agentMode,
     taskId: a.taskId,
     maxTurns: a.maxTurns,
     extraPrompt: a.extraPrompt,

@@ -213,6 +213,7 @@ export async function removeModel(ref: string, opts: { keepFiles?: boolean } = {
   if (!m) throw new Error(`No model "${ref}". See \`lvw model ls\`.`);
   const { serverState, stopServer } = await import("../runtime/llamacpp.ts");
   if (serverState()?.modelId === m.id) await stopServer();
+  if (serverState("vision")?.modelId === m.id) await stopServer("vision");
   const root = ensureDirs().models;
   const shared = new Set(listModels().filter((o) => o.id !== m.id && o.dir === m.dir).flatMap((o) => o.files));
   let freed = 0;

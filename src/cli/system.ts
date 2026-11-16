@@ -1,3 +1,4 @@
+import { defaultFor } from "../models/defaults.ts";
 import { existsSync, rmSync } from "node:fs";
 import { totalmem } from "node:os";
 import { join } from "node:path";
@@ -98,6 +99,17 @@ export async function doctorCommand() {
     const ids = ready(kind);
     check(`media: ${kind}`, ids.length ? true : "warn", ids.length ? ids.join(", ") : `not set up (optional): lvw media install ${kind}`);
   }
+  const { findWhisperServer } = await import("../media/whispercpp.ts");
+  const { findAudioCpp } = await import("../media/audiocpp.ts");
+  const { idolInstalled, idolMissingAccess, idolAccessHelp } = await import("../media/idol.ts");
+  const whisper = findWhisperServer();
+  check("whisper-server", whisper ? true : "warn", whisper ?? "missing (optional): lvw media install transcribe");
+  const acpp = findAudioCpp();
+  check("audio.cpp", acpp ? true : "warn", acpp ?? "missing (optional, Yue2 music): lvw media install music");
+  if (idolInstalled()) {
+    const missing = await idolMissingAccess().catch(() => ["(couldn't reach Hugging Face)"]);
+    check("idol access", missing.length ? "warn" : true, missing.length ? idolAccessHelp(missing) : "DINOv3 and FLUX.2-dev encoders readable");
+  } else check("idol", "warn", "not installed (optional, picture to 3D): lvw media install 3d");
   check("uv", Bun.which("uv") ? true : "warn", Bun.which("uv") ? "ok" : "missing: needed for 3D and music");
   check("ffmpeg", Bun.which("ffmpeg") ? true : "warn", Bun.which("ffmpeg") ? "ok" : "missing (optional): only WAV audio can be transcribed");
   for (const s of ["hf", "gh", "gl"] as const) check(`${s} token`, getToken(s) ? true : "warn", getToken(s) ? "set" : "not set (only for gated/private models)");
@@ -133,11 +145,11 @@ export async function setupCommand(argv: string[]) {
   if (n) console.log(`${c.green("ok")} installed ${n} bundled skills`);
 
   if (!listModels().length) {
-    const spec = DEFAULT_MODEL;
-    console.log(`\nThe suggested starter model is ${c.bold(spec)} (about 2.5 GB, good at tool calls).`);
+    const chat = defaultFor("chat");
+    console.log(`\nThe suggested chat model is ${c.bold(chat.name)} (${chat.native}, about 2.2 GB, ${chat.licence}). It makes tool calls and reasons.`);
     if (yes || (await confirm("Download it now?", true))) {
       const { modelCommand } = await import("./models.ts");
-      await modelCommand(["pull", spec, "--yes"]);
+      await modelCommand(["pull", chat.native, "--yes"]);
       const first = listModels()[0];
       if (first) {
         const cfg = loadConfig();
@@ -146,7 +158,22 @@ export async function setupCommand(argv: string[]) {
       }
     }
   }
+  if (!loadConfig().visionModel) {
+    const vision = defaultFor("vision");
+    console.log(`\nFor pictures, the suggested vision model is ${c.bold(vision.name)} (about 1.5 GB with its projector, ${vision.licence}). It answers turns that carry an image when the chat model can't see.`);
+    if (yes || (await confirm("Download it now?", true))) {
+      const { modelCommand } = await import("./models.ts");
+      const before = new Set(listModels().map((m) => m.id));
+      await modelCommand(["pull", vision.native, "--yes"]);
+      const added = listModels().find((m) => !before.has(m.id)) ?? listModels().find((m) => m.spec?.includes("lfm3-vl"));
+      if (added) {
+        const cfg = loadConfig();
+        cfg.visionModel = added.name;
+        saveConfig(cfg);
+      }
+    }
+  }
   console.log(`\nDone. Start chatting with ${c.bold("lvw chat")}, or open the web UI with ${c.bold("lvw serve")}.`);
 }
 
-export const DEFAULT_MODEL = "hf:unsloth/Qwen3-4B-Instruct-2507-GGUF:Q4_K_M";
+export { DEFAULT_MODEL } from "../models/defaults.ts";

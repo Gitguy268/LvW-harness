@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { extname, join, relative } from "node:path";
 import { paths } from "../paths.ts";
 import { findEntry, type MediaEntry, type MediaKind } from "./catalog.ts";
 
@@ -49,7 +49,7 @@ export function mediaModelDir(id: string) {
 
 export function saveInstalled(entry: MediaEntry, files: Record<string, string>, size: number) {
   const dir = mediaModelDir(entry.id);
-  const rel = Object.fromEntries(Object.entries(files).map(([k, p]) => [k, basename(p)]));
+  const rel = Object.fromEntries(Object.entries(files).map(([k, p]) => [k, relative(dir, p)]));
   writeFileSync(join(dir, "model.json"), JSON.stringify({ id: entry.id, entry, files: rel, size, addedAt: Date.now() }, null, 2));
 }
 

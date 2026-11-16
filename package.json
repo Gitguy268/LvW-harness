@@ -12,7 +12,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "build": "bun scripts/build.ts",
-    "build:all": "bun scripts/build.ts --all"
+    "build:all": "bun scripts/build.ts --all",
+    "build:webui": "bun scripts/build-webui.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",
@@ -23,6 +24,11 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
-    "typescript": "^7.0.2"
+    "@wllama/wllama": "3.13.0",
+    "coi-serviceworker": "0.1.7",
+    "hash-wasm": "4.13.0",
+    "just-bash": "3.6.0",
+    "typescript": "^7.0.2",
+    "yaml": "2.9.1"
   }
 }

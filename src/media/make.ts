@@ -9,6 +9,9 @@ import { openAiImage, replicate, speech, toWav, transcribe, type OpenAiTarget } 
 import { catalog, defaultEntry, findEntry, parseComponent, type MediaEntry, type MediaKind } from "./catalog.ts";
 import { findSdServer, sdGenerate, startSd, type SdProgress } from "./sdcpp.ts";
 import { make3d, makeMusic, sidecarInstalled } from "./sidecar.ts";
+import { findAudioCpp, installAudioCpp, makeYue2 } from "./audiocpp.ts";
+import { idolInstalled, installIdol, makeIdol, stopIdol } from "./idol.ts";
+import { findWhisperServer, installWhisper, stopWhisper, whisperTranscribe } from "./whispercpp.ts";
 import { extOf, installedMedia, listInstalledMedia, mediaModelDir, removeInstalled, saveInstalled, saveOutput, type MediaOutput } from "./store.ts";
 
 export interface MakeRequest {
@@ -53,12 +56,26 @@ const openAi = (): OpenAiTarget | undefined => {
   return baseUrl ? { baseUrl: baseUrl.replace(/\/+$/, ""), key } : undefined;
 };
 
-/** Is a local engine ready for this entry? */
-export async function entryReady(e: MediaEntry): Promise<boolean> {
+/** Ready without asking Ollama: the weights and the engine binary are both on disk. */
+function engineReady(e: MediaEntry): boolean {
   if (e.engine === "sdcpp") return Boolean(installedMedia(e.id) && findSdServer());
-  if (e.engine === "ollama") return (await ollamaAvailable()) && (await ollamaList()).some((m) => m.name === e.ollama || m.name === `${e.ollama}:latest`);
+  if (e.engine === "whispercpp") return Boolean(installedMedia(e.id) && findWhisperServer());
+  if (e.engine === "audiocpp") return Boolean(installedMedia(e.id) && findAudioCpp());
+  if (e.engine === "idol") return Boolean(installedMedia(e.id) && idolInstalled());
   return sidecarInstalled(e.engine === "triposr" ? "3d" : "music");
 }
+
+/** Is a local engine ready for this entry? */
+export async function entryReady(e: MediaEntry): Promise<boolean> {
+  if (e.engine === "ollama") return (await ollamaAvailable()) && (await ollamaList()).some((m) => m.name === e.ollama || m.name === `${e.ollama}:latest`);
+  return engineReady(e);
+}
+
+const installed = (e: MediaEntry) => {
+  const m = installedMedia(e.id);
+  if (!m) throw new Error(`${e.name} isn't downloaded. Run \`lvw media pull ${e.id}\`.`);
+  return m;
+};
 
 /** Pick the local entry to use, or undefined when the kind should go to an API. */
 async function pick(kind: MediaKind, model?: string): Promise<MediaEntry | undefined> {
@@ -122,6 +139,12 @@ export async function make(req: MakeRequest, opts: MakeOptions = {}): Promise<Me
     return viaReplicate(kind, req, meta, opts) ?? Promise.reject(noEngine(kind));
   }
 
+  if (kind === "transcribe" && entry?.engine === "whispercpp") {
+    say("Listening…");
+    const text = await whisperTranscribe(installed(entry).files.model, await toWav(req.audio!), { language: req.language, translate: req.translate, signal: opts.signal, onStatus: say });
+    return saveOutput("transcribe", new TextEncoder().encode(text), ".txt", { ...meta, language: req.language }, text);
+  }
+
   if (kind === "speech" || kind === "transcribe") {
     const api = loadConfig().media.api.openai;
     const local = entry ? { target: { baseUrl: ollamaOpenAiUrl() }, model: entry.ollama! } : undefined;
@@ -141,6 +164,10 @@ export async function make(req: MakeRequest, opts: MakeOptions = {}): Promise<Me
   }
 
   if (kind === "3d") {
+    if (entry?.engine === "idol") {
+      const { glb } = await makeIdol(installed(entry).files.model, req.image!, { seed: req.seed, steps: req.steps, signal: opts.signal, onStatus: say });
+      return saveOutput("3d", glb, ".glb", meta);
+    }
     if (entry) {
       const glb = await make3d(req.image!, { signal: opts.signal, onStatus: say });
       return saveOutput("3d", glb, ".glb", meta);
@@ -149,6 +176,10 @@ export async function make(req: MakeRequest, opts: MakeOptions = {}): Promise<Me
   }
 
   if (kind === "music") {
+    if (entry?.engine === "audiocpp") {
+      const wav = await makeYue2(installed(entry), { prompt: req.prompt!, lyrics: req.lyrics, seed: req.seed, steps: req.steps }, { signal: opts.signal, onStatus: say });
+      return saveOutput("music", wav, ".wav", { ...meta, lyrics: req.lyrics });
+    }
     if (entry) {
       const wav = await makeMusic({ prompt: req.prompt!, lyrics: req.lyrics, seconds: req.seconds, seed: req.seed }, { signal: opts.signal, onStatus: say });
       return saveOutput("music", wav, ".wav", { ...meta, seconds: req.seconds ?? 30, lyrics: req.lyrics });
@@ -188,6 +219,13 @@ export async function pullMedia(id: string, opts: { signal?: AbortSignal; onEven
     await installSidecar(e.engine === "triposr" ? "3d" : "music", say);
     return e;
   }
+  // These engines need their program as well as the weights.
+  if (e.engine === "whispercpp" && !findWhisperServer()) await installWhisper(say);
+  if (e.engine === "audiocpp" && !findAudioCpp()) {
+    say("Downloading audio.cpp…");
+    await installAudioCpp((done, total) => opts.onEvent?.({ type: "progress", file: "audio.cpp", done, total: total ?? 0 }));
+  }
+  if (e.engine === "idol" && !idolInstalled()) await installIdol(say);
   const dir = mediaModelDir(e.id);
   const files: Record<string, string> = {};
   const plan: { flag: string; file: Awaited<ReturnType<typeof listHfFiles>>[number] }[] = [];
@@ -204,7 +242,7 @@ export async function pullMedia(id: string, opts: { signal?: AbortSignal; onEven
   if (need > free - keep) throw new Error(`${e.name} needs ${formatBytes(need)} but only ${formatBytes(free)} is free (keeping ${loadConfig().minFreeGB} GB spare).`);
   for (const { flag, file } of plan) {
     const name = file.path.split("/").pop()!;
-    const dest = `${dir}/${name}`;
+    const dest = e.layout === "repo" ? `${dir}/${file.path}` : `${dir}/${name}`;
     await downloadFile(file, dest, { signal: opts.signal, onProgress: (done, total) => opts.onEvent?.({ type: "progress", file: name, done, total: total ?? file.size ?? 0 }) });
     files[flag] = dest;
   }
@@ -225,6 +263,8 @@ export async function removeMedia(id: string) {
     removeSidecar(name);
     return true;
   }
+  if (e?.engine === "whispercpp") await stopWhisper();
+  if (e?.engine === "idol") await stopIdol();
   const { sdState, stopSd } = await import("./sdcpp.ts");
   if (sdState()?.modelId === id) await stopSd();
   return removeInstalled(id);
@@ -236,10 +276,10 @@ export interface MediaRow extends MediaEntry {
 
 /** The catalog with what is ready on this machine. */
 export async function mediaStatus(): Promise<MediaRow[]> {
-  const installed = new Set(listInstalledMedia().map((m) => m.id));
+  const downloaded = new Set(listInstalledMedia().map((m) => m.id));
   const ollama = (await ollamaAvailable()) ? (await ollamaList()).map((m) => m.name.replace(/:latest$/, "")) : [];
   return catalog().map((e) => ({
     ...e,
-    ready: e.engine === "sdcpp" ? installed.has(e.id) : e.engine === "ollama" ? ollama.includes(e.ollama!) : sidecarInstalled(e.engine === "triposr" ? "3d" : "music"),
+    ready: e.engine === "sdcpp" ? downloaded.has(e.id) : e.engine === "ollama" ? ollama.includes(e.ollama!) : engineReady(e),
   }));
 }
