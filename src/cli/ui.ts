@@ -20,7 +20,7 @@ export const c = {
 export function logLine(tool: string, args: unknown): string {
   const a = (args ?? {}) as Record<string, unknown>;
   const what = a.command ?? a.path ?? a.url ?? a.query ?? a.name ?? a.task ?? JSON.stringify(args ?? "");
-  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${c.dim(time)} ${c.bold(tool.padEnd(8))} ${c.dim(String(what).replace(/\s+/g, " ").slice(0, 140))}`;
 }
 

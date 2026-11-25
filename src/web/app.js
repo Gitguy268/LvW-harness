@@ -419,7 +419,7 @@ async function chatPage(root) {
   const addAssistant = (el, text) => {
     el.append(h("button", { class: "small speak", title: "Read this aloud", onclick: (e) => speakText(text, e.currentTarget) }, "Read aloud"));
   };
-  const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   const addTool = (id, name, args, time) => {
     const pre = h("pre", {}, JSON.stringify(args, null, 2));
     const el = h(

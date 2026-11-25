@@ -55,6 +55,8 @@ body { background: var(--bg); color: var(--ink); font: 14.5px/1.5 var(--sans); }
 .sidebar a.active { color: var(--ink); border-bottom-color: var(--strap); font-weight: 600; }
 .sidebar-foot { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; padding-left: 16px; }
 .sidebar-foot div:empty { display: none; }
+.sidebar-foot div { overflow: hidden; text-overflow: ellipsis; max-width: 30ch; }
+.sidebar-foot div:nth-last-child(-n+2) { max-width: none; flex: none; }
 main { overflow: auto; outline: none; min-height: 0; }
 .page { max-width: 1060px; margin: 0 auto; padding: 26px 28px 64px; }
 h1 { font-size: 21px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.01em; }
@@ -195,7 +197,7 @@ figure.media figcaption { font-size: 12px; }
 .msg .attached img { max-width: 180px; max-height: 140px; border-radius: 2px; }
 .msg .attached audio { max-width: 260px; }
 .msg.assistant { position: relative; }
-.msg.assistant .speak { position: absolute; right: 0; bottom: -4px; opacity: 0; transition: opacity .15s; }
+.msg.assistant .speak { display: block; margin: 2px 0 0 auto; opacity: 0; transition: opacity .15s; }
 .msg.assistant:hover .speak, .msg.assistant .speak:focus { opacity: 1; }
 button.recording { background: var(--bad); color: #fff; border-color: var(--bad); }
 

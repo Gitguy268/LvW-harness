@@ -11,7 +11,7 @@ A local-first AI agent with a one-command model manager for Hugging Face, GitHub
 ![Built on the pi SDK](https://img.shields.io/badge/built%20on-pi%20SDK-2f6f62)
 ![Runs on macOS and Linux](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux-2f6f62)
 
-<img src="docs/images/models.webp" alt="The Models page of the LvW web UI: disk meter, a source field, and a table of downloaded models with Run and Remove buttons" width="900">
+<img src="docs/images/models.webp" alt="The Models page of the LvW web UI: a disk meter and the suggested models, one per row, with Get buttons" width="900">
 
 </div>
 
@@ -240,6 +240,8 @@ lvw serve                          # http://127.0.0.1:7878
 ```
 
 The pages are Chat, Create, Models, Recipes, Tasks, Memory, Skills, Compare and Settings. Chat has a mode picker, approval cards, attachments, voice notes, checkpoints and a preview of any HTML or SVG the agent writes. Create makes images, video, speech, music and 3D, and Compare sends one prompt to several models side by side. The UI loads nothing from the internet and works offline.
+
+<img src="docs/images/chat.webp" alt="A chat with K2-Horizon: each tool call is one line of the work log with its time and result, and the agent waits under a striped approval box before it edits notes.md" width="900">
 
 <table>
 <tr>
