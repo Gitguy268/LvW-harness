@@ -81,7 +81,7 @@ const head = `    <script>
     </script>
     <script src="coi-serviceworker.min.js"></script>
     <link rel="manifest" href="manifest.webmanifest" />
-    <meta name="theme-color" content="#256f68" />
+    <meta name="theme-color" content="#f06418" />
 `;
 html = html
   .replace("<title>LvW</title>", "<title>LvW web UI</title>")
@@ -92,11 +92,11 @@ if (!html.includes('src="backend.js"')) fail("couldn't add backend.js to index.h
 writeFileSync(join(out, "index.html"), html);
 writeFileSync(
   join(out, "manifest.webmanifest"),
-  JSON.stringify({ name: "LvW web UI", short_name: "LvW", start_url: "./", display: "standalone", background_color: "#0f1514", theme_color: "#256f68", icons: [{ src: "icon.svg", sizes: "any", type: "image/svg+xml" }] }, null, 2),
+  JSON.stringify({ name: "LvW web UI", short_name: "LvW", start_url: "./", display: "standalone", background_color: "#1c2023", theme_color: "#f06418", icons: [{ src: "icon.svg", sizes: "any", type: "image/svg+xml" }] }, null, 2),
 );
 writeFileSync(
   join(out, "icon.svg"),
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#256f68"/><path d="M8 9v14h7M17 9l3.5 14L24 9" stroke="white" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>\n`,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="3" fill="#f06418"/><path d="M8 9v14h7M17 9l3.5 14L24 9" stroke="#15181a" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>\n`,
 );
 
 // 3. wllama with the thread-pool patch: mtmd (images, audio) starts 4 std::threads of its own,

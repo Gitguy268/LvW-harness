@@ -36,7 +36,7 @@ export async function improveCommand(argv: string[]) {
       cwd,
       resolved,
       maxTurns: values["max-turns"] ? Number(values["max-turns"]) : undefined,
-      onProbe: (s, copied) => console.error(c.cyan(`● ${s}`) + (copied ? "" : c.dim(" (folder over 50 MB: started from an empty folder)"))),
+      onProbe: (s, copied) => console.error(c.orange(s) + (copied ? "" : c.dim(" (folder over 50 MB: started from an empty folder)"))),
     });
     table(
       results.map((r) => [c.bold(r.strategy), r.error ? c.red("error") : String(r.score), String(r.toolCalls), String(r.tokens), (r.error ?? r.reason).slice(0, 70)]),

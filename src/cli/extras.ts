@@ -110,7 +110,7 @@ export async function taskCommand(argv: string[]) {
     }
     case "show": {
       const t = getTask(id) ?? fail(`No task #${rest[0] ?? ""}`);
-      console.log(`${c.bold(`#${t.id} ${t.title}`)}  ${STATUS_COLOR[t.status](t.status)}  ${c.dim(`owner ${t.owner ?? "-"} · ${t.used_tokens} tokens${t.budget_tokens ? ` of ${t.budget_tokens}` : ""}`)}`);
+      console.log(`${c.bold(`#${t.id} ${t.title}`)}  ${STATUS_COLOR[t.status](t.status)}  ${c.dim(`owner ${t.owner ?? "-"}, ${t.used_tokens} tokens${t.budget_tokens ? ` of ${t.budget_tokens}` : ""}`)}`);
       if (t.description) console.log(`\n${t.description}`);
       console.log();
       for (const e of taskEvents(t.id)) console.log(`${c.dim(new Date(e.at).toLocaleString())}  ${e.kind.padEnd(7)} ${e.text.split("\n")[0].slice(0, 120)}`);

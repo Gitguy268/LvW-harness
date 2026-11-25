@@ -7,10 +7,10 @@ import { isMode, MODE_IDS, MODES } from "../core/modes.ts";
 import { listSessions, Session, shutdownTools } from "../core/session.ts";
 import { parseAgentArgs } from "./agent-args.ts";
 import { toolText } from "./run.ts";
-import { c } from "./ui.ts";
+import { c, logLine } from "./ui.ts";
 
 const mdTheme: MarkdownTheme = {
-  heading: (s) => c.bold(c.cyan(s)),
+  heading: (s) => c.bold(c.orange(s)),
   link: c.blue,
   linkUrl: c.dim,
   code: c.yellow,
@@ -19,7 +19,7 @@ const mdTheme: MarkdownTheme = {
   quote: c.dim,
   quoteBorder: c.dim,
   hr: c.dim,
-  listBullet: c.cyan,
+  listBullet: c.orange,
   bold: c.bold,
   italic: (s) => `\x1b[3m${s}\x1b[23m`,
   strikethrough: (s) => `\x1b[9m${s}\x1b[29m`,
@@ -47,7 +47,7 @@ export async function chatCommand(argv: string[]) {
   let pending: ((a: Answer) => void) | undefined;
   const ask = (req: ApprovalRequest) =>
     new Promise<Answer>((resolve) => {
-      status.setText(`${c.yellow("Allow")} ${c.bold(req.summary.slice(0, 300))}${c.yellow("?")}  ${c.dim("[y]es  [n]o  [a]lways")}`);
+      status.setText(`${c.hazard(" Allow? ")} ${c.bold(req.summary.slice(0, 300))}  ${c.dim("[y]es  [n]o  [a]lways")}`);
       tui.requestRender();
       pending = (ans) => {
         pending = undefined;
@@ -84,13 +84,13 @@ export async function chatCommand(argv: string[]) {
     throw err;
   }
   log.clear();
-  const header = () => `${c.bold("LvW")} ${c.dim(`· ${MODES[session.agentMode].label} · ${session.ctx.model.label} · ${a.permissions ?? session.ctx.config.permissions} approvals · ${session.ctx.exec.id} · /help`)}`;
+  const header = () => `${c.bold(c.orange("lvw"))}  ${c.dim(`${MODES[session.agentMode].label} mode   ${session.ctx.model.label}   ${a.permissions ?? session.ctx.config.permissions} approvals   ${session.ctx.exec.id}   /help for commands`)}`;
   log.addChild(new Text(header(), 1, 1));
   if (resumeId) log.addChild(new Text(c.dim(`resumed session ${resumeId} (${session.agent.state.messages.length} messages)`), 1, 0));
 
   const editor = new Editor(tui, {
     borderColor: c.dim,
-    selectList: { selectedPrefix: c.cyan, selectedText: c.bold, description: c.dim, scrollInfo: c.dim, noMatch: c.dim },
+    selectList: { selectedPrefix: c.orange, selectedText: c.bold, description: c.dim, scrollInfo: c.dim, noMatch: c.dim },
   });
   tui.addChild(editor);
   tui.setFocus(editor);
@@ -98,6 +98,7 @@ export async function chatCommand(argv: string[]) {
   let current: Markdown | undefined;
   let currentText = "";
   const tools = new Map<string, Text>();
+  const lines = new Map<string, string>();
   let loader: Loader | undefined;
   const wire = (s: Session) =>
     s.subscribe((ev: AgentEvent) => {
@@ -117,14 +118,17 @@ export async function chatCommand(argv: string[]) {
         log.addChild(new Text(c.red(`error: ${(ev.message as { errorMessage?: string }).errorMessage}`), 1, 0));
       }
       if (ev.type === "tool_execution_start") {
-        const line = new Text(`${c.cyan("●")} ${c.bold(ev.toolName)} ${c.dim(JSON.stringify(ev.args).slice(0, 140))}`, 1, 0);
+        const text = logLine(ev.toolName, ev.args);
+        const line = new Text(text, 1, 0);
         tools.set(ev.toolCallId, line);
+        lines.set(ev.toolCallId, text);
         log.addChild(line);
       }
       if (ev.type === "tool_execution_end") {
         const out = toolText(ev.result).split("\n").find((l) => l.trim()) ?? "";
         const line = tools.get(ev.toolCallId);
-        line?.setText(`${ev.isError ? c.red("✗") : c.green("✓")} ${c.bold(ev.toolName)} ${c.dim(out.slice(0, 140))}`);
+        const start = lines.get(ev.toolCallId) ?? logLine(ev.toolName, {});
+        line?.setText(ev.isError ? `${start}  ${c.red("failed")} ${c.dim(out.slice(0, 120))}` : `${start}  ${c.green("ok")}`);
       }
       tui.requestRender();
     });
@@ -179,7 +183,7 @@ export async function chatCommand(argv: string[]) {
     const modeCmd = /^\/(mode|architect)\b\s*(\S*)/.exec(text);
     if (modeCmd) {
       const next = modeCmd[1] === "architect" ? "architect" : modeCmd[2];
-      if (!next) return say(c.dim(MODE_IDS.map((m) => `${m === session.agentMode ? c.cyan("●") : " "} ${m.padEnd(10)} ${MODES[m].summary}`).join("\n")));
+      if (!next) return say(c.dim(MODE_IDS.map((m) => `${m === session.agentMode ? c.orange(">") : " "} ${m.padEnd(10)} ${MODES[m].summary}`).join("\n")));
       if (!isMode(next)) return say(c.red(`Unknown mode "${next}". Modes: ${MODE_IDS.join(", ")}`));
       agentMode = next;
       const keep = session.id;
@@ -191,7 +195,7 @@ export async function chatCommand(argv: string[]) {
     }
     if (text === "/checkpoints") {
       const list = (await session.checkpoints?.list(15)) ?? [];
-      return say(list.length ? list.map((cp) => `${c.cyan(cp.id.slice(0, 8))} ${c.dim(new Date(cp.time).toLocaleString())} ${cp.label}`).join("\n") : c.dim("No checkpoints yet. One is taken before the agent's first change in each turn."));
+      return say(list.length ? list.map((cp) => `${c.orange(cp.id.slice(0, 8))} ${c.dim(new Date(cp.time).toLocaleString())} ${cp.label}`).join("\n") : c.dim("No checkpoints yet. One is taken before the agent's first change in each turn."));
     }
     const restore = /^\/(undo|restore)\b\s*(\S*)/.exec(text);
     if (restore) {
@@ -217,7 +221,7 @@ export async function chatCommand(argv: string[]) {
     }
     log.addChild(new Text(`${c.bold(c.blue("you"))} ${text}`, 1, 1));
     editor.disableSubmit = true;
-    loader = new Loader(tui, c.cyan, c.dim, "thinking…");
+    loader = new Loader(tui, c.orange, c.dim, "thinking…");
     tui.addChild(loader);
     loader.start();
     tui.requestRender();

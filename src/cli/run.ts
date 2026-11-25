@@ -3,7 +3,7 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { Session, shutdownTools } from "../core/session.ts";
 import { getTask, updateTask } from "../orchestra/tasks.ts";
 import { parseAgentArgs } from "./agent-args.ts";
-import { c, fail } from "./ui.ts";
+import { c, fail, logLine } from "./ui.ts";
 
 /** Non-interactive: run one task to the end. Nothing asks; actions that need approval are refused unless --yes/--auto. */
 export async function runCommand(argv: string[], mode: "default" | "research" = "default") {
@@ -39,14 +39,14 @@ export async function runCommand(argv: string[], mode: "default" | "research" = 
       const err = (ev.message as { errorMessage?: string }).errorMessage;
       if (err && !isNoToolsError(err)) console.error(c.red(`error: ${err}`));
     }
-    if (ev.type === "tool_execution_start") console.error(c.cyan(`● ${ev.toolName}`) + c.dim(` ${JSON.stringify(ev.args).slice(0, 160)}`));
-    if (ev.type === "tool_execution_end" && ev.isError) console.error(c.red(`  ✗ ${toolText(ev.result).slice(0, 300)}`));
+    if (ev.type === "tool_execution_start") console.error(logLine(ev.toolName, ev.args));
+    if (ev.type === "tool_execution_end" && ev.isError) console.error(c.red(`      failed: ${toolText(ev.result).slice(0, 300)}`));
   });
   try {
     const answer = await session.prompt(text);
     if (session.stopReason) console.error(c.yellow(`stopped: ${session.stopReason}`));
     if (a.taskId) updateTask(a.taskId, { status: session.stopReason ? "blocked" : "review", result: answer, addTokens: session.usage.input + session.usage.output });
-    if (!a.json) console.error(c.dim(`${session.usage.turns} turns · ${session.usage.input + session.usage.output} tokens`));
+    if (!a.json) console.error(c.dim(`${session.usage.turns} turns, ${session.usage.input + session.usage.output} tokens`));
   } finally {
     process.off("SIGINT", ctrl);
     await session.dispose();

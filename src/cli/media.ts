@@ -92,7 +92,7 @@ export async function mediaCommand(argv: string[]) {
         rows.map((r) => [r.ready ? c.green("●") : c.dim("○"), r.id, r.kinds.join(","), `${r.sizeGB} GB`, r.licence, r.default ? c.dim("default") : ""]),
         ["", "id", "kinds", "size", "licence", ""],
       );
-      console.log(c.dim(`\nsd-server: ${findSdServer() ?? "not installed"}  ·  outputs: ${paths().media}`));
+      console.log(c.dim(`\nsd-server: ${findSdServer() ?? "not installed"}\noutputs:   ${paths().media}`));
       return;
     }
     case "install":

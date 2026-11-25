@@ -161,7 +161,7 @@ async function refreshStatus() {
     const s = state.status;
     $("#status-line").replaceChildren(
       h("div", {}, backend.kind === "browser" ? "In this browser" : backend.kind === "remote" ? `Connected: ${remote.url.replace(/^https?:\/\//, "")}` : ""),
-      h("div", {}, s.running ? `▶ ${s.running.modelName}` : "No model loaded"),
+      h("div", {}, s.running ? `${s.running.modelName} loaded` : "No model loaded"),
       h("div", {}, `default: ${s.model ?? "none"}`),
       h("div", {}, `${bytes(s.free)} free`),
       h("div", {}, `v${s.version}`),
@@ -354,7 +354,7 @@ async function chatPage(root) {
     modeInfo.modes.map((m) => h("option", { value: m.id, title: m.summary, selected: m.id === (savedMode ?? modeInfo.current) }, m.label)),
   );
   const statusLine = h("div", { class: "muted status-line", "aria-live": "polite" });
-  const ckptBtn = h("button", { title: "Checkpoints: roll back what the agent changed", "aria-label": "Checkpoints", onclick: () => toggleCheckpoints() }, "↩");
+  const ckptBtn = h("button", { title: "Checkpoints: roll back what the agent changed", "aria-label": "Checkpoints", onclick: () => toggleCheckpoints() }, "Undo…");
   const ckptPane = h("div", { class: "card checkpoints", hidden: true });
   async function toggleCheckpoints(force) {
     if (!force && !ckptPane.hidden) return void (ckptPane.hidden = true);
@@ -387,7 +387,7 @@ async function chatPage(root) {
   const list = h(
     "div",
     { class: "sessions" },
-    h("button", { class: "new", onclick: () => (location.hash = "chat") }, "+ New chat"),
+    h("button", { class: "new", onclick: () => (location.hash = "chat") }, "New chat"),
     sessions.map((s) => h("a", { href: `#chat/${s.id}`, class: s.id === sessionId ? "active" : "", title: s.cwd }, s.title || "chat")),
   );
 
@@ -417,11 +417,17 @@ async function chatPage(root) {
       ),
     );
   const addAssistant = (el, text) => {
-    el.append(h("button", { class: "small speak", title: "Read this aloud", onclick: (e) => speakText(text, e.currentTarget) }, "🔊"));
+    el.append(h("button", { class: "small speak", title: "Read this aloud", onclick: (e) => speakText(text, e.currentTarget) }, "Read aloud"));
   };
-  const addTool = (id, name, args) => {
+  const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const addTool = (id, name, args, time) => {
     const pre = h("pre", {}, JSON.stringify(args, null, 2));
-    const el = h("details", { class: "tool" }, h("summary", {}, h("span", { class: "state" }), h("strong", {}, name), h("span", { class: "muted mono" }, summarize(args))), pre);
+    const el = h(
+      "details",
+      { class: "tool" },
+      h("summary", {}, h("span", { class: "time" }, time ? clock(time) : ""), h("strong", {}, name), h("span", { class: "args" }, summarize(args)), h("span", { class: "state" }, "running")),
+      pre,
+    );
     toolEls.set(id, { el, pre, name, args });
     transcript.append(el);
     return el;
@@ -430,7 +436,8 @@ async function chatPage(root) {
     const t = toolEls.get(id);
     if (!t) return;
     t.el.classList.add(isError ? "err" : "ok");
-    if (result?.details?.injectionWarning) t.el.querySelector("summary").append(h("span", { class: "pill big", title: "This content looked like it was trying to give the agent instructions. It was passed on as data only." }, "⚠ possible prompt injection"));
+    t.el.querySelector(".state").textContent = isError ? "failed" : "ok";
+    if (result?.details?.injectionWarning) t.el.querySelector("summary").append(h("span", { class: "pill big", title: "This content looked like it was trying to give the agent instructions. It was passed on as data only." }, "possible prompt injection"));
     const text = (result?.content ?? []).map((b) => b.text ?? `[${b.type}]`).join("\n");
     t.pre.textContent = `${JSON.stringify(t.args, null, 2)}\n\n${text}`;
     const media = result?.details?.media;
@@ -477,8 +484,8 @@ async function chatPage(root) {
             addAssistant(el, b.text);
           }
           if (b.type === "toolCall") {
-            addTool(b.id, b.name, b.arguments);
             const r = results.get(b.id);
+            addTool(b.id, b.name, b.arguments, r?.timestamp);
             if (r) finishTool(b.id, r, r.isError);
           }
         }
@@ -527,7 +534,7 @@ async function chatPage(root) {
     }
     if (ev.type === "message_end" && ev.message.role === "assistant" && current && currentText.trim()) addAssistant(current, currentText);
     if (ev.type === "message_end" && ev.message.role === "assistant" && ev.message.errorMessage && ev.message.stopReason !== "aborted") transcript.append(h("div", { class: "msg error" }, ev.message.errorMessage));
-    if (ev.type === "tool_execution_start") addTool(ev.toolCallId, ev.toolName, ev.args);
+    if (ev.type === "tool_execution_start") addTool(ev.toolCallId, ev.toolName, ev.args, Date.now());
     if (ev.type === "tool_execution_end") finishTool(ev.toolCallId, ev.result, ev.isError);
     scroll();
   });
@@ -538,7 +545,7 @@ async function chatPage(root) {
   const showChips = () =>
     chips.replaceChildren(
       ...files.map((f, i) =>
-        h("span", { class: "chip" }, f.mime.startsWith("image/") ? h("img", { src: `data:${f.mime};base64,${f.data}`, alt: "" }) : "🎤", f.name ?? f.mime, h("button", { class: "small", title: "Remove", onclick: () => (files.splice(i, 1), showChips()) }, "×")),
+        h("span", { class: "chip" }, f.mime.startsWith("image/") ? h("img", { src: `data:${f.mime};base64,${f.data}`, alt: "" }) : "audio:", f.name ?? f.mime, h("button", { class: "small", title: "Remove", onclick: () => (files.splice(i, 1), showChips()) }, "×")),
       ),
     );
   const addFiles = async (list) => {
@@ -556,7 +563,7 @@ async function chatPage(root) {
     showChips();
   };
   const picker = h("input", { type: "file", accept: "image/*,audio/*", multiple: true, hidden: true, onchange: () => addFiles(picker.files).then(() => (picker.value = "")) });
-  const attachBtn = h("button", { title: "Attach pictures or audio", "aria-label": "Attach", onclick: () => picker.click() }, "📎");
+  const attachBtn = h("button", { title: "Attach pictures or audio", "aria-label": "Attach", onclick: () => picker.click() }, "Attach");
   let recording = null;
   const micBtn = h(
     "button",
@@ -568,23 +575,23 @@ async function chatPage(root) {
           if (!recording) {
             recording = await recordMic();
             micBtn.classList.add("recording");
-            micBtn.textContent = "■";
+            micBtn.textContent = "Stop recording";
           } else {
             const wav = await recording.stop();
             recording = null;
             micBtn.classList.remove("recording");
-            micBtn.textContent = "🎤";
+            micBtn.textContent = "Record";
             files.push({ name: "voice note", mime: "audio/wav", data: await readB64(wav) });
             showChips();
           }
         } catch (e) {
           recording = null;
-          micBtn.textContent = "🎤";
+          micBtn.textContent = "Record";
           fail(e);
         }
       },
     },
-    "🎤",
+    "Record",
   );
   input.addEventListener("paste", (e) => {
     const pasted = [...(e.clipboardData?.files ?? [])];
@@ -769,7 +776,7 @@ async function modelsPage(root) {
     const free = du.free;
     const total = du.used + free;
     disk.replaceChildren(
-      h("div", { class: "row" }, h("strong", { class: "grow" }, "Disk"), h("span", { class: "muted" }, `models ${bytes(du.used)} · ${bytes(free)} free`), h("button", { class: "small", onclick: gc }, "Clean up")),
+      h("div", { class: "row" }, h("strong", { class: "grow" }, "Disk"), h("span", { class: "muted" }, `${bytes(du.used)} in models, ${bytes(free)} free`), h("button", { class: "small", onclick: gc }, "Clean up")),
       h("div", { class: "meter", style: "margin-top:10px", role: "img", "aria-label": `Models use ${bytes(du.used)}, ${bytes(free)} free` }, h("span", { style: `width:${Math.max(1, (du.used / total) * 100)}%;background:var(--accent)` }), h("span", { style: `width:${100 - (du.used / total) * 100}%` })),
     );
     const running = state.status?.running?.modelId;
@@ -835,7 +842,7 @@ async function modelsPage(root) {
           h("div", { class: "row" }, h("span", { class: "pill" }, d.role), h("strong", { class: "grow" }, d.name), d.installed ? h("span", { class: "pill fits" }, "ready") : ""),
           h("div", { class: "muted mono", style: "font-size:12px" }, d.repo),
           h("p", { class: "muted" }, d.note),
-          h("div", { class: "row" }, h("span", { class: "muted grow" }, `${d.sizeGB ? `${d.sizeGB} GB · ` : ""}${d.licence}`),
+          h("div", { class: "row" }, h("span", { class: "muted grow" }, `${d.sizeGB ? `${d.sizeGB} GB, ` : ""}${d.licence}`),
             d.available === false
               ? h("span", { class: "muted" }, d.why ?? "needs the desktop harness")
               : d.installed
@@ -1092,7 +1099,7 @@ async function tasksPage(root) {
     const { tasks, approvals: pending } = await api("/api/tasks");
     approvals.replaceChildren(
       pending.length ? h("h2", {}, "Waiting for you") : "",
-      ...pending.map((a) => h("div", { class: "approval" }, h("strong", {}, `#${a.id}${a.task_id ? ` · task ${a.task_id}` : ""}`), h("span", { class: "mono" }, a.question), h("div", { class: "row" }, h("button", { class: "primary", onclick: () => decide(a.id, true) }, "Approve"), h("button", { class: "danger", onclick: () => decide(a.id, false) }, "Reject")))),
+      ...pending.map((a) => h("div", { class: "approval" }, h("strong", {}, `#${a.id}${a.task_id ? `, from task ${a.task_id}` : ""}`), h("span", { class: "mono" }, a.question), h("div", { class: "row" }, h("button", { class: "primary", onclick: () => decide(a.id, true) }, "Approve"), h("button", { class: "danger", onclick: () => decide(a.id, false) }, "Reject")))),
     );
     const cols = ["todo", "doing", "blocked", "review", "done"];
     board.replaceChildren(
@@ -1100,7 +1107,7 @@ async function tasksPage(root) {
         h(
           "div",
           { class: "col" },
-          h("h3", {}, `${c} · ${tasks.filter((t) => t.status === c).length}`),
+          h("h3", {}, c, h("span", { class: "count" }, String(tasks.filter((t) => t.status === c).length))),
           tasks
             .filter((t) => t.status === c)
             .map((t) =>
@@ -1187,7 +1194,7 @@ async function skillsPage(root) {
     toast("Installing…");
     try {
       const r = await api("/api/skills", { method: "POST", body: { spec: spec.value.trim() } });
-      toast(`Installed ${r.installed.map((i) => i.name).join(", ")} · licence: ${r.installed[0]?.licence}`);
+      toast(`Installed ${r.installed.map((i) => i.name).join(", ")}. Licence: ${r.installed[0]?.licence}`);
       spec.value = "";
     } catch (e) {
       fail(e);
@@ -1221,7 +1228,7 @@ async function comparePage(root) {
     out.replaceChildren(h("p", { class: "muted" }, "Running one model after another…"));
     try {
       const results = await api("/api/compare", { method: "POST", body: { prompt: prompt.value, models: chosen } });
-      out.replaceChildren(...results.map((r) => h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "mono grow" }, r.model), h("span", { class: "muted" }, `${(r.ms / 1000).toFixed(1)} s${r.tokens ? ` · ${r.tokens} tokens` : ""}`)), r.error ? h("p", { style: "color:var(--bad)" }, r.error) : h("div", { class: "msg", html: markdown(r.text) }))));
+      out.replaceChildren(...results.map((r) => h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "mono grow" }, r.model), h("span", { class: "muted" }, `${(r.ms / 1000).toFixed(1)} s${r.tokens ? `, ${r.tokens} tokens` : ""}`)), r.error ? h("p", { style: "color:var(--bad)" }, r.error) : h("div", { class: "msg", html: markdown(r.text) }))));
     } catch (e) {
       out.replaceChildren();
       fail(e);
@@ -1267,7 +1274,7 @@ async function createPage(root) {
   const optBox = h("div", { class: "opts" });
   const makeBtn = h("button", { class: "primary" }, "Make");
   let recording = null;
-  const recBtn = h("button", { hidden: true }, "🎤 Record");
+  const recBtn = h("button", { hidden: true }, "Record");
   const jobs = h("div", { class: "jobs" });
   const gallery = h("div", { class: "gallery" });
   const catalog = h("div", {});
@@ -1296,13 +1303,13 @@ async function createPage(root) {
       } else {
         const wav = await recording.stop();
         recording = null;
-        recBtn.textContent = "🎤 Record";
+        recBtn.textContent = "Record";
         inputFile = { mime: "audio/wav", data: await readB64(wav) };
         toast("Recording ready. Press Make.");
       }
     } catch (e) {
       recording = null;
-      recBtn.textContent = "🎤 Record";
+      recBtn.textContent = "Record";
       fail(e);
     }
   };
@@ -1330,7 +1337,7 @@ async function createPage(root) {
     const pct = j.total ? Math.round((100 * (j.step ?? 0)) / j.total) : j.size ? Math.round((100 * (j.done ?? 0)) / j.size) : null;
     el.replaceChildren(
       h("div", { class: "row" }, h("strong", { class: "grow" }, `${j.action === "pull" ? "Downloading" : j.kind}: ${j.label}`), j.status === "running" ? h("button", { class: "small", onclick: () => api(`/api/jobs/${j.id}/cancel`, { method: "POST" }).catch(fail) }, "Cancel") : h("span", { class: `pill ${j.status === "done" ? "fits" : "big"}` }, j.status)),
-      j.status === "running" ? h("div", { class: "muted" }, `${j.note ?? "starting…"}${j.total ? ` · step ${j.step}/${j.total}` : ""}`) : null,
+      j.status === "running" ? h("div", { class: "muted" }, `${j.note ?? "starting…"}${j.total ? `, step ${j.step}/${j.total}` : ""}`) : null,
       j.status === "running" && pct !== null ? h("progress", { max: 100, value: pct }) : null,
       j.preview ? h("img", { class: "preview-step", src: `data:image/png;base64,${j.preview}`, alt: "preview" }) : null,
       j.error ? h("p", { class: "err-text" }, j.error) : null,
@@ -1348,7 +1355,7 @@ async function createPage(root) {
               "div",
               { class: "card item" },
               mediaEl({ ...o, prompt: o.meta?.prompt }),
-              h("div", { class: "row" }, h("span", { class: "muted grow", title: o.meta?.prompt ?? "" }, `${o.kind} · ${(o.meta?.prompt ?? o.text ?? (o.kind === "3d" ? "from a picture" : "")).slice(0, 70)}`), h("button", { class: "small danger", onclick: () => confirm("Delete this?") && api(`/api/media/out/${o.rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }).then(refresh, fail) }, "Delete")),
+              h("div", { class: "row" }, h("span", { class: "muted grow", title: o.meta?.prompt ?? "" }, `${o.kind}: ${(o.meta?.prompt ?? o.text ?? (o.kind === "3d" ? "from a picture" : "")).slice(0, 70)}`), h("button", { class: "small danger", onclick: () => confirm("Delete this?") && api(`/api/media/out/${o.rel.split("/").map(encodeURIComponent).join("/")}`, { method: "DELETE" }).then(refresh, fail) }, "Delete")),
             ),
           )
         : [h("div", { class: "empty" }, "Nothing made yet.")]),
@@ -1360,7 +1367,7 @@ async function createPage(root) {
       h(
         "table",
         {},
-        h("tbody", {}, data.catalog.map((e) => h("tr", {}, h("td", {}, h("strong", {}, e.name), h("div", { class: "muted" }, e.note ?? "")), h("td", { class: "muted" }, e.kinds.join(", ")), h("td", { class: "muted" }, `${e.sizeGB} GB · ${e.licence}`), h("td", { style: "text-align:right;white-space:nowrap" }, e.ready ? h("button", { class: "small danger", onclick: () => confirm(`Remove ${e.name}?`) && api(`/api/media/models/${encodeURIComponent(e.id)}`, { method: "DELETE" }).then(refresh, fail) }, "Remove") : h("button", { class: "small primary", onclick: () => api("/api/media/pull", { method: "POST", body: { id: e.id } }).catch(fail) }, "Get"))))),
+        h("tbody", {}, data.catalog.map((e) => h("tr", {}, h("td", {}, h("strong", {}, e.name), h("div", { class: "muted" }, e.note ?? "")), h("td", { class: "muted" }, e.kinds.join(", ")), h("td", { class: "muted" }, `${e.sizeGB} GB, ${e.licence}`), h("td", { style: "text-align:right;white-space:nowrap" }, e.ready ? h("button", { class: "small danger", onclick: () => confirm(`Remove ${e.name}?`) && api(`/api/media/models/${encodeURIComponent(e.id)}`, { method: "DELETE" }).then(refresh, fail) }, "Remove") : h("button", { class: "small primary", onclick: () => api("/api/media/pull", { method: "POST", body: { id: e.id } }).catch(fail) }, "Get"))))),
       ),
       data.uv ? null : h("p", { class: "muted" }, "3D and music install with uv, which isn't on this machine: https://docs.astral.sh/uv/"),
     );

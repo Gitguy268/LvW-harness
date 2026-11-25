@@ -11,7 +11,18 @@ export const c = {
   yellow: wrap("33"),
   blue: wrap("34"),
   cyan: wrap("36"),
+  orange: wrap("38;5;208"),
+  /** Black on yellow: only for the moment the agent stops and asks. */
+  hazard: wrap("30;43"),
 };
+
+/** One line of the work log: "14:02 bash     bun test". */
+export function logLine(tool: string, args: unknown): string {
+  const a = (args ?? {}) as Record<string, unknown>;
+  const what = a.command ?? a.path ?? a.url ?? a.query ?? a.name ?? a.task ?? JSON.stringify(args ?? "");
+  const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${c.dim(time)} ${c.bold(tool.padEnd(8))} ${c.dim(String(what).replace(/\s+/g, " ").slice(0, 140))}`;
+}
 
 export function table(rows: string[][], header?: string[]) {
   const all = header ? [header, ...rows] : rows;
