@@ -9,6 +9,8 @@ LvW-harness is MIT licensed (see [LICENSE](LICENSE)). It builds on the work belo
 | [@earendil-works/pi-ai, pi-agent-core, pi-tui, pi-mcp, pi-telemetry](https://github.com/earendil-works/pi) | 1.4.0 | MIT | model providers, the agent loop, the terminal UI, the MCP client |
 | [playwright-core](https://github.com/microsoft/playwright) | 1.64.1 | Apache-2.0 | the browser tools |
 
+Development dependencies used only to build the web UI that runs in the browser (`bun run build:webui`): [just-bash](https://github.com/vercel-labs/just-bash) 3.6.0 (Apache-2.0, with its own dependencies under MIT, ISC, BSD and Apache-2.0 licences), [@wllama/wllama](https://github.com/ngxson/wllama) 3.13.0 (MIT), [hash-wasm](https://github.com/Daninet/hash-wasm) 4.13.0 (MIT), [yaml](https://github.com/eemeli/yaml) 2.9.1 (ISC) and [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) 0.1.7 (MIT).
+
 ## Bundled skills
 
 Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except where noted.
@@ -26,6 +28,10 @@ Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except
 
 | Software | Licence | Where |
 |---|---|---|
+| [wllama](https://github.com/ngxson/wllama) 3.13.0 (llama.cpp `7d7f028` in WebAssembly) | MIT | the static web UI, `vendor/wllama/`. **Changed:** the worker pool gets 4 extra threads, because llama.cpp's multimodal code starts its own threads and the pool otherwise hangs |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) v1.9.5 in WebAssembly | MIT | `src/webui/vendor/whisper/`, built by `scripts/build-whisper-wasm.sh` with LvW's own small binding (`scripts/whisper-wasm/lvw_whisper.cpp`) |
+| [just-bash](https://github.com/vercel-labs/just-bash) 3.6.0 browser build | Apache-2.0 | the static web UI's shell; its gzip and worker features, which need Node, are replaced by stubs |
+| [hash-wasm](https://github.com/Daninet/hash-wasm), [yaml](https://github.com/eemeli/yaml), [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) | MIT, ISC, MIT | the static web UI: SHA-256 checks, recipe files, cross-origin isolation on GitHub Pages |
 | [@google/model-viewer](https://github.com/google/model-viewer) 4.4.0 (UMD build, includes [three.js](https://github.com/mrdoob/three.js), MIT, and [fflate](https://github.com/101arrowz/fflate), MIT) | Apache-2.0 | `src/web/vendor/model-viewer.min.js`, licence text in `src/web/vendor/model-viewer.LICENSE`; loaded only when a 3D result is shown |
 
 ## Downloaded at run time (not part of this repository)
@@ -45,7 +51,15 @@ Copied into `skills/`, each folder with its original `LICENSE`. Unchanged except
 | [rembg](https://github.com/danielgatis/rembg) and its U²-Net weights | MIT, Apache-2.0 | the 3D engine's venv, for background removal |
 | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) code (tag `v0.1.8`) and weights | MIT | `lvw media install music`, with its own `uv sync` |
 | Media models (Z-Image-Turbo, Qwen3-4B text encoder, FLUX VAE via Comfy-Org, SD 1.5 GGUF, Wan 2.1 1.3B, UMT5-XXL GGUF, LFM3 Audio/Omni, Phonon) | Apache-2.0; SD 1.5: CreativeML OpenRAIL-M; LFM models: LFM Open License 1.0; Phonon voices: partly CC BY-NC 4.0 | `lvw media pull`; each licence is shown in `lvw media ls` |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server` 1.9.5 | MIT | `lvw media install transcribe`: Homebrew's `whisper.cpp` on a Mac, else a pinned source build |
+| [audio.cpp](https://github.com/0xShug0/audio.cpp) v0.9.5 release build | Apache-2.0 | `lvw media install music`; checked against the sha256 digest GitHub publishes |
+| [idol.cpp](https://github.com/TimeLordRaps/idol.cpp) v0.1.1 release package, the pinned [idol-sdk](https://github.com/speridlabs/idol-sdk), PyTorch and their Python dependencies | Apache-2.0 (idol.cpp), the others their own | `lvw media install 3d`, with its own `setup.sh` in a uv-made venv |
+| Default models: K2-Horizon 4x0.9B MoE heretic GGUF, LFM3-VL 2B heretic GGUF, Whisper large-v3-turbo (oxide-lab, whisper.cpp files), Yue2-3B GGUF (audio-cpp), Idol-GGUF; Idol's DINOv3 and FLUX.2-dev encoders | Apache-2.0; LFM Open License v1.0; MIT; **CC-BY-NC-4.0**; Apache-2.0; the encoders are gated, under their own terms | `lvw setup`, `lvw media install`, or the web UI's Models page |
 | Models from Hugging Face, GitHub, GitLab or Ollama | each model's own licence | `lvw model pull` |
+
+## Test files
+
+`test/e2e/fixtures/jfk.wav` is the sample from [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`samples/jfk.wav`, MIT repository): eleven seconds of John F. Kennedy's 1961 inaugural address, a US government work in the public domain. `red-circle.png` was drawn by a script for these tests.
 
 ## Ideas, no code
 
@@ -53,7 +67,7 @@ These projects inspired features that were written from scratch for LvW. No code
 
 | Project | Licence | Idea used in LvW |
 |---|---|---|
-| [opencode](https://github.com/anomalyco/opencode) | MIT | coding tool set, permission modes |
+| [opencode](https://github.com/anomalyco/opencode) | MIT | coding tool set, permission modes, plan and build modes |
 | [oh-my-pi](https://github.com/can1357/oh-my-pi) | MIT | coding tools on top of pi |
 | [cloudflare/computer](https://github.com/cloudflare/computer) | MIT | one `exec` call with swappable backends (host or Docker) |
 | [ego-lite](https://github.com/citrolabs/ego-lite) | MIT | one isolated browser "Space" per agent, compact page snapshots with refs |
@@ -71,6 +85,12 @@ These projects inspired features that were written from scratch for LvW. No code
 | [deepagents](https://github.com/langchain-ai/deepagents) | MIT | the `todo` planning tool, moving large tool outputs to files, summarizing long threads |
 | [wshobson/agents](https://github.com/wshobson/agents) | MIT | named specialist subagents from Markdown files, the plugin catalogue format |
 | [repository-harness](https://github.com/hoangnb24/repository-harness) | MIT | `lvw repo init`: a small `AGENTS.md` and a repo map, added without overwriting |
+| [Cline](https://github.com/cline/cline) | Apache-2.0 | read-only planning separate from acting, and checkpoints of the workspace at every turn that you can roll back |
+| [Aider](https://github.com/Aider-AI/aider) | Apache-2.0 | architect mode (one model plans, another edits), the repo map ranked by references, running tests and lint after edits and feeding failures back, `undo` |
+| [Kilo Code](https://github.com/Kilo-Org/kilocode) | MIT | Code, Plan, Ask and Debug modes with a model pinned to each mode |
+| [Goose](https://github.com/aaif-goose/goose) | Apache-2.0 | shareable YAML recipes with parameters and sub-recipes, prompt-injection checks on outside content |
+| [OpenHands](https://github.com/OpenHands/openhands) | MIT | a critic pass that reviews the agent's result |
+| [Codex CLI](https://github.com/openai/codex) | Apache-2.0 | fanning a CSV of tasks out to parallel subagents |
 | [odysseus](https://github.com/odysseus-dev/odysseus) | **AGPL-3.0** | side-by-side model compare, the RAM fit check. Ideas only; no AGPL code is included |
 
 ## Trademarks

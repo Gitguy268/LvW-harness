@@ -113,3 +113,25 @@ export async function resolveChatModel(ref = loadConfig().model, onStatus?: (s: 
   }
   throw new Error(`Unknown model "${ref}". Use a name from \`lvw model ls\`, ollama:<name>, or <provider>:<model-id> (e.g. anthropic:claude-sonnet-5-5 with ANTHROPIC_API_KEY set).`);
 }
+
+/**
+ * Add config.visionModel to a resolved chat model's provider set (llama-server slot "vision"),
+ * so a turn with a picture can run on it while the chat model keeps its own server.
+ * Returns undefined when no vision model is set or the chat model sees by itself.
+ */
+export async function attachVisionModel(resolved: ResolvedChatModel, onStatus?: (s: string) => void): Promise<Model<any> | undefined> {
+  const ref = loadConfig().visionModel;
+  if (!ref || resolved.senses?.sees) return undefined;
+  const record = findModel(ref);
+  if (!record) throw new Error(`The vision model "${ref}" isn't downloaded. Run \`lvw setup\` or \`lvw model pull\` it, or clear visionModel in the config.`);
+  // A picture costs ~1.4k tokens in pi-ai's estimate on top of a ~3k prompt, and pi-ai keeps
+  // 4k back as a safety margin, so a vision model needs at least 16k to have room to answer.
+  const state = await startServer(record, { slot: "vision", ctx: Math.max(16_384, loadConfig().llama.ctx), onStatus });
+  const base = `http://127.0.0.1:${state.port}/v1`;
+  const senses = await localSenses("llama", state.modelName, base);
+  if (!senses.sees) throw new Error(`${record.name} can't see pictures: it has no vision projector (mmproj). Pull it again so the projector comes along.`);
+  const model = localModel("lvw-vision", state.modelName, base, state.ctx, senses);
+  resolved.models.setProvider(createProvider({ id: "lvw-vision", auth: keyless, models: [model], api: openAICompletionsApi() }));
+  return model;
+}
+

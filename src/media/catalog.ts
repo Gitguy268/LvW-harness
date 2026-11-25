@@ -10,7 +10,7 @@ import builtin from "./catalog.json" with { type: "json" };
  */
 export type MediaKind = "image" | "video" | "speech" | "transcribe" | "listen" | "music" | "3d";
 export const MEDIA_KINDS: MediaKind[] = ["image", "video", "speech", "transcribe", "listen", "music", "3d"];
-export type Engine = "sdcpp" | "ollama" | "triposr" | "acestep";
+export type Engine = "sdcpp" | "ollama" | "triposr" | "acestep" | "whispercpp" | "audiocpp" | "idol";
 
 export interface MediaDefaults {
   steps?: number;
@@ -36,6 +36,8 @@ export interface MediaEntry {
   note?: string;
   /** sd-server flag name (without --) → "hf:owner/repo/path/in/repo". */
   components?: Record<string, string>;
+  /** "repo" keeps the repo's folders (audio.cpp reads sidecars/ next to the weights). */
+  layout?: "flat" | "repo";
   /** Ollama model name for engine "ollama". */
   ollama?: string;
   args?: string[];

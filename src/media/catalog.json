@@ -2,6 +2,63 @@
   "version": 1,
   "entries": [
     {
+      "id": "whisper-large-v3-turbo",
+      "kinds": [
+        "transcribe"
+      ],
+      "engine": "whispercpp",
+      "name": "Whisper large-v3-turbo (q4_1)",
+      "licence": "MIT",
+      "sizeGB": 0.52,
+      "ramGB": 1.5,
+      "default": true,
+      "note": "whisper.cpp file from oxide-lab's whisper.cpp/ folder. The repo's root GGUF files are Candle-only and don't load in whisper.cpp.",
+      "components": {
+        "model": "hf:oxide-lab/whisper-large-v3-turbo-GGUF/whisper.cpp/whisper-large-v3-turbo-q4_1.gguf"
+      }
+    },
+    {
+      "id": "yue2-3b",
+      "kinds": [
+        "music"
+      ],
+      "engine": "audiocpp",
+      "name": "Yue2-3B (Q4_0, audio.cpp)",
+      "licence": "CC-BY-NC-4.0 (non-commercial)",
+      "sizeGB": 2.94,
+      "ramGB": 8,
+      "default": true,
+      "layout": "repo",
+      "note": "Songs with vocals from lyrics and a style prompt. Weights are non-commercial only.",
+      "components": {
+        "model": "hf:audio-cpp/Yue2-3B-GGUF/yue2-3b-q4_0.gguf",
+        "vae": "hf:audio-cpp/Yue2-3B-GGUF/yue2-vae-f16.gguf",
+        "model-config": "hf:audio-cpp/Yue2-3B-GGUF/sidecars/yue2-model-config.json",
+        "generation-config": "hf:audio-cpp/Yue2-3B-GGUF/sidecars/yue2-generation-config.json",
+        "vae-config": "hf:audio-cpp/Yue2-3B-GGUF/sidecars/yue2-vae-config.json",
+        "tokenizer": "hf:audio-cpp/Yue2-3B-GGUF/sidecars/yue2-qwen.tiktoken"
+      },
+      "defaults": {
+        "steps": 8
+      }
+    },
+    {
+      "id": "idol",
+      "kinds": [
+        "3d"
+      ],
+      "engine": "idol",
+      "name": "Idol (Q8_0, idol.cpp)",
+      "licence": "Apache-2.0; DINOv3 and FLUX.2-dev encoders under their own gated terms",
+      "sizeGB": 4.7,
+      "ramGB": 8,
+      "default": true,
+      "note": "Picture to 3D. x86-64 only (Rosetta 2 on Apple Silicon, macOS 15+). Needs Hugging Face access to the gated DINOv3 and FLUX.2-dev encoders (about 3.7 GB, fetched on first run).",
+      "components": {
+        "model": "hf:TimeLordRaps/Idol-GGUF/Idol-Q8_0.gguf"
+      }
+    },
+    {
       "id": "z-image-turbo",
       "kinds": [
         "image"
@@ -100,7 +157,6 @@
       "licence": "LFM-Open-1.0",
       "sizeGB": 1.7,
       "ramGB": 3,
-      "default": true,
       "note": "Speech recognition, translation and text-to-speech in 18 languages. Needs Ollama 0.40.13+."
     },
     {
@@ -140,7 +196,6 @@
       "licence": "MIT",
       "sizeGB": 1.7,
       "ramGB": 6,
-      "default": true,
       "note": "One picture to a textured mesh (GLB) in seconds. Text-to-3D makes the picture first."
     },
     {
@@ -153,7 +208,6 @@
       "licence": "MIT",
       "sizeGB": 9.0,
       "ramGB": 8,
-      "default": true,
       "note": "Songs with or without lyrics, instrumentals and short sound beds."
     }
   ]

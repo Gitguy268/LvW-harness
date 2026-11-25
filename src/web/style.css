@@ -178,3 +178,20 @@ figure.media figcaption { font-size: 12px; }
 .msg.assistant .speak { position: absolute; right: 6px; bottom: 6px; opacity: 0; transition: opacity .15s; }
 .msg.assistant:hover .speak, .msg.assistant .speak:focus { opacity: 1; }
 button.recording { background: var(--bad); color: #fff; border-color: var(--bad); }
+
+/* Modes, checkpoints, recipes, settings, suggested models */
+.status-line { font-size: 12px; min-height: 1em; }
+.msg.note { font-size: 13px; padding: 4px 10px; border-left: 3px solid var(--line); }
+.checkpoints { margin: 0 24px 8px; max-height: 40vh; overflow: auto; }
+.checkpoints table { font-size: 13px; }
+pre.diff { max-height: 30vh; overflow: auto; font-size: 12px; background: var(--code); padding: 8px; border-radius: 6px; white-space: pre; }
+.suggested { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.suggested .pick p { margin: 6px 0; font-size: 13px; }
+.field-row { margin: 6px 0; align-items: center; }
+.field-row .label { min-width: 170px; color: var(--muted); }
+.field-row input[type="text"], .field-row select { flex: 1; min-width: 0; }
+@media (max-width: 760px) {
+  .field-row { flex-wrap: wrap; }
+  .field-row .label { min-width: 100%; }
+  .checkpoints { margin: 0 16px 8px; }
+}

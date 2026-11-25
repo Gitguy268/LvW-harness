@@ -30,6 +30,19 @@ function ggufSets(files: RemoteFile[]) {
 
 const setSize = (fs: RemoteFile[]) => fs.reduce((n, f) => n + (f.size ?? 0), 0);
 
+/** The projector to pair with a vision model: F16 first (what llama.cpp's own repos ship), then Q8_0, else the smallest. */
+export function pickProjector(files: RemoteFile[]): RemoteFile | undefined {
+  const proj = files.filter((f) => isGguf(f.path) && isProjector(f.path));
+  return proj.find((f) => quantOf(f.path) === "F16") ?? proj.find((f) => quantOf(f.path) === "Q8_0") ?? proj.sort((a, b) => (a.size ?? 0) - (b.size ?? 0))[0];
+}
+
+/** A vision repo's model without its projector can't see, so bring the projector along. */
+function withProjector(sel: Selection, usable: RemoteFile[]): Selection {
+  if (sel.files.some((f) => isProjector(f.path)) || !sel.files.some((f) => isGguf(f.path))) return sel;
+  const proj = pickProjector(usable);
+  return proj ? { ...sel, files: [...sel.files, proj] } : sel;
+}
+
 export interface Selection {
   files: RemoteFile[];
   note?: string;
@@ -40,6 +53,12 @@ export interface Selection {
  * Without one: a GGUF repo gives one quant (Q4_K_M if present); any other repo gives every file.
  */
 export function selectFiles(available: RemoteFile[], opts: { pattern?: string; all?: boolean }): Selection {
+  const usable = available.filter((f) => !f.path.endsWith(".gitattributes"));
+  const sel = selectOnly(usable, opts);
+  return opts.all || (opts.pattern && isProjector(opts.pattern)) ? sel : withProjector(sel, usable);
+}
+
+function selectOnly(available: RemoteFile[], opts: { pattern?: string; all?: boolean }): Selection {
   const usable = available.filter((f) => !f.path.endsWith(".gitattributes"));
   if (opts.all) return { files: usable };
   const sets = ggufSets(usable);

@@ -9,7 +9,7 @@ const errors: string[] = [];
 page.on("pageerror", (e) => errors.push(e.message));
 page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
-for (const name of ["chat", "models", "tasks", "memory", "skills", "compare"]) {
+for (const name of ["chat", "models", "recipes", "tasks", "memory", "skills", "compare", "settings"]) {
   await page.goto(`${base}/#${name}`);
   await page.waitForTimeout(800);
   await page.screenshot({ path: `${out}/lvw-${name}.png` });

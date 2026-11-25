@@ -34,17 +34,18 @@ export async function mediaTools(ctx: ToolContext): Promise<LvwTool[]> {
   const sd = Boolean(findSdServer());
   const installed = listInstalledMedia();
   const has = (kind: string) => installed.some((m) => m.entry.kinds.includes(kind as never));
+  // Kinds a local engine other than sd.cpp can make right now (Ollama audio, whisper.cpp, audio.cpp, idol, sidecars).
   let audio: string[] = [];
   try {
-    audio = (await mediaStatus()).filter((r) => r.engine === "ollama" && r.ready).flatMap((r) => r.kinds);
+    audio = (await mediaStatus()).filter((r) => r.engine !== "sdcpp" && r.ready).flatMap((r) => r.kinds);
   } catch {}
   const ready = {
     image: (sd && has("image")) || (openai && api.openai?.image) || (replicate && api.replicate?.image),
     video: (sd && has("video")) || (replicate && api.replicate?.video),
     speech: audio.includes("speech") || (openai && api.openai?.speech),
     transcribe: audio.includes("transcribe") || (openai && api.openai?.transcribe),
-    music: sidecarInstalled("music") || (replicate && api.replicate?.music),
-    "3d": sidecarInstalled("3d") || (replicate && api.replicate?.["3d"]),
+    music: audio.includes("music") || sidecarInstalled("music") || (replicate && api.replicate?.music),
+    "3d": audio.includes("3d") || sidecarInstalled("3d") || (replicate && api.replicate?.["3d"]),
   };
   const run = (req: MakeRequest, signal?: AbortSignal) => make(req, { signal }).then(result);
   const tools: LvwTool[] = [];

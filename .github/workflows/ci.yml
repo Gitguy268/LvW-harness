@@ -21,8 +21,9 @@ jobs:
       - run: bun test
       - run: bun run build
       - run: ./dist/lvw version
+      - run: bun run build:webui
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: shellcheck install.sh start.command
+      - run: shellcheck install.sh start.command scripts/build-whisper-wasm.sh

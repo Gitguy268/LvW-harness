@@ -15,10 +15,13 @@ ${c.bold("Media")}
   lvw transcribe <audio-file>                           speech to text
 
 ${c.bold("Agent")}
-  lvw chat [--model m] [--auto|--readonly] [--sandbox docker]   terminal chat
-  lvw run "<task>" [--yes] [--json]                     one task, no questions
+  lvw chat [--model m] [--mode m] [--auto|--readonly] [--sandbox docker]   terminal chat
+  lvw run "<task>" [--mode m] [--yes] [--json]          one task, no questions
+     modes: code (default), plan, ask, debug, architect, research
+  lvw recipe ls|new|add|show|rm|run <name> [-p k=v]     shareable YAML task recipes
+  lvw undo [id]   lvw checkpoints [--diff id]           roll back what the agent changed
   lvw research "<question>"                             deep research report
-  lvw serve [--host h] [--port p]                       web UI and API (default 127.0.0.1:7878)
+  lvw serve [--host h] [--port p] [--allow-web]         web UI and API (default 127.0.0.1:7878); --allow-web lets the online web UI connect with a token
   lvw telegram                                          talk to LvW from Telegram
   lvw improve "<task>" [--name p]                       experimental: tune a prompt profile (--profile p)
 
@@ -81,6 +84,13 @@ async function main(argv: string[]) {
       return (await import("./extras.ts")).skillCommand(rest);
     case "repo":
       return (await import("./extras.ts")).repoCommand(rest);
+    case "recipe":
+    case "recipes":
+      return (await import("./features.ts")).recipeCommand(rest);
+    case "checkpoints":
+      return (await import("./features.ts")).checkpointCommand(rest);
+    case "undo":
+      return (await import("./features.ts")).checkpointCommand(rest, true);
     case "memory":
       return (await import("./extras.ts")).memoryCommand(rest);
     case "task":
