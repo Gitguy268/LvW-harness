@@ -2,7 +2,7 @@
 import pkg from "../../package.json" with { type: "json" };
 import { c } from "./ui.ts";
 
-const HELP = `${c.bold("lvw")} — LvW-harness ${pkg.version}, a local-first agent harness
+const HELP = `${c.bold("lvw")}: LvW-harness ${pkg.version}, a local-first agent harness
 
 ${c.bold("Models")}
   lvw model search|info|pull|ls|rm|du|gc|run|stop|use   download, run and remove models
